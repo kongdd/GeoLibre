@@ -3,6 +3,10 @@ import { describe, it } from "node:test";
 import {
   ensureHtmlFileName,
   ensureProjectFileName,
+  isRemoteProjectFile,
+  isRemoteProjectPath,
+  projectDataStorage,
+  remoteProjectFilePath,
 } from "../apps/geolibre-desktop/src/lib/file-names";
 
 describe("ensureHtmlFileName", () => {
@@ -35,6 +39,17 @@ describe("ensureHtmlFileName", () => {
   it("appends .html when a non-HTML dot suffix is present", () => {
     assert.equal(ensureHtmlFileName("my.map", "fallback"), "my.map.html");
     assert.equal(ensureHtmlFileName("data.json", "fallback"), "data.json.html");
+  });
+});
+
+describe("project storage", () => {
+  it("defaults to local and builds a confined remote path", () => {
+    assert.equal(projectDataStorage({}), "local");
+    assert.equal(projectDataStorage({ dataStorage: "remote" }), "remote");
+    assert.equal(remoteProjectFilePath("../trip"), "/mnt/z/GeoLibre/.._trip/.._trip.geolibre.json");
+    assert.equal(isRemoteProjectPath("/mnt/z/GeoLibre/trip/trip.geolibre.json"), true);
+    assert.equal(isRemoteProjectFile("/mnt/z/GeoLibre/trip/trip.geolibre.json"), true);
+    assert.equal(isRemoteProjectFile("/mnt/z/GeoLibre/trip.geolibre.json"), false);
   });
 });
 

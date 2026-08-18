@@ -31,7 +31,6 @@ import {
   DialogTitle,
   Input,
   Label,
-  ScrollArea,
   Select,
   Separator,
   Textarea,
@@ -1570,7 +1569,7 @@ export function FieldCollectionDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <ScrollArea className="min-h-0 flex-1">
+          <div className="field-collection-scroll">
             <div className="field-collection-scroll-content space-y-4 p-4 pe-6">
               <div className="space-y-1.5">
                 <Label>{t("fieldCollection.targetLayer")}</Label>
@@ -1710,7 +1709,7 @@ export function FieldCollectionDialog({
                 </p>
               )}
             </div>
-          </ScrollArea>
+          </div>
 
           <div className="field-collection-footer flex shrink-0 flex-wrap justify-end gap-2 border-t p-3">
             {editingFeatureId != null ? (

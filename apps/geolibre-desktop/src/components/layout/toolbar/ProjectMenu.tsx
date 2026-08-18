@@ -15,6 +15,8 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
+  Label,
+  Select,
 } from "@geolibre/ui";
 import {
   BookOpen,
@@ -44,6 +46,11 @@ import { useTranslation } from "react-i18next";
 import { useDesktopSettingsStore } from "../../../hooks/useDesktopSettings";
 import { isMenuItemVisible } from "../../../lib/ui-profile";
 import type { ShareHostStatus } from "../../../lib/share-geolibre";
+import {
+  projectDataStorage,
+  REMOTE_PROJECT_ROOT,
+  type ProjectDataStorage,
+} from "../../../lib/file-names";
 import { formatRecentProjectTime, type ToolbarChrome } from "./constants";
 
 // aria-describedby targets for the "sharing server unavailable" explanation.
@@ -61,6 +68,8 @@ function ProjectPropertiesDialog({
   const projectName = useAppStore((s) => s.projectName);
   const projectPath = useAppStore((s) => s.projectPath);
   const isDirty = useAppStore((s) => s.isDirty);
+  const metadata = useAppStore((s) => s.metadata);
+  const dataStorage = projectDataStorage(metadata);
   const layerCount = useAppStore((s) => s.layers.length);
   const groupCount = useAppStore((s) => s.layerGroups.length);
   const status = projectPath
@@ -92,6 +101,32 @@ function ProjectPropertiesDialog({
             </div>
           ))}
         </dl>
+        <div className="space-y-2 border-t pt-4">
+          <Label htmlFor="project-data-storage">{t("projectProperties.dataStorage")}</Label>
+          <Select
+            id="project-data-storage"
+            value={dataStorage}
+            onChange={(event) => {
+              const value = event.target.value as ProjectDataStorage;
+              useAppStore.setState((state) =>
+                projectDataStorage(state.metadata) === value
+                  ? state
+                  : {
+                      metadata: { ...state.metadata, dataStorage: value },
+                      isDirty: true,
+                    },
+              );
+            }}
+          >
+            <option value="local">{t("projectProperties.storageLocal")}</option>
+            <option value="remote">{t("projectProperties.storageRemote")}</option>
+          </Select>
+          {dataStorage === "remote" ? (
+            <p className="text-xs text-muted-foreground">
+              {t("projectProperties.remoteStoragePath", { path: REMOTE_PROJECT_ROOT })}
+            </p>
+          ) : null}
+        </div>
       </DialogContent>
     </Dialog>
   );

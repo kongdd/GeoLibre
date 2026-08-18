@@ -990,6 +990,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    allowedHosts: ["ecohydro.top"],
     watch: {
       // Never watch the Rust side. `tauri dev` runs this dev server as its
       // `beforeDevCommand` and then starts cargo in the same tree, so the

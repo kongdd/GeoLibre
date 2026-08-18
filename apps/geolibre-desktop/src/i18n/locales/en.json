@@ -22,7 +22,11 @@
     "modified": "Unsaved changes",
     "notSaved": "Not saved",
     "layers": "Layers",
-    "groups": "Layer groups"
+    "groups": "Layer groups",
+    "dataStorage": "Data storage",
+    "storageLocal": "Local",
+    "storageRemote": "Remote",
+    "remoteStoragePath": "Remote project data is saved to {{path}}."
   },
   "browser": {
     "title": "Browser",

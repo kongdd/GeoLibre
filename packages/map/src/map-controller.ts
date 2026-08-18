@@ -3,6 +3,7 @@ import {
   DEFAULT_BASEMAP,
   DEFAULT_PROJECT_PREFERENCES,
   getPlanetaryBasemapByStyleUrl,
+  getRuntimeEnvironment,
   getRegionalBasemapByStyleUrl,
   isRegionalBasemapSentinel,
   PLANETARY_BASEMAP_SENTINEL_PREFIX,
@@ -549,9 +550,16 @@ export class MapController {
     // Start blank and apply it below, as soon as the listeners are wired — the
     // path a project saved with a Mapbox basemap and a split-view pane both take.
     const deferMapboxStyle = isMapboxStyleUrl(this.basemapStyleUrl);
+    const openFreeMapProxy = getRuntimeEnvironment().VITE_OPENFREEMAP_PROXY?.replace(/\/$/, "");
     this.map = new maplibregl.Map({
       container,
       style: deferMapboxStyle ? createBlankMapStyle() : resolveMapStyle(this.basemapStyleUrl),
+      transformRequest: (url) => ({
+        url:
+          openFreeMapProxy && url.startsWith("https://tiles.openfreemap.org/")
+            ? `${openFreeMapProxy}${url.slice("https://tiles.openfreemap.org".length)}`
+            : url,
+      }),
       center: view?.center ?? [-100, 40],
       zoom: view?.zoom ?? 2,
       bearing: view?.bearing ?? 0,

@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import hmac
 import os
+from pathlib import Path
 import signal
+import tempfile
 import threading
 import time
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -125,6 +128,80 @@ class RunRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+def _write_remote_project(target: Path, content: bytes) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+    )
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _remote_project_target(name: str, root: Path) -> Path:
+    relative = Path(name)
+    parts = relative.parts
+    if (
+        not name
+        or len(name) > 255
+        or relative.is_absolute()
+        or "\\" in name
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid project file name")
+    lower = name.lower()
+    if len(parts) == 2 and lower.endswith((".geolibre", ".geolibre.json", ".json")):
+        pass
+    elif (
+        len(parts) == 3
+        and parts[1] == "images"
+        and lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif"))
+    ):
+        pass
+    else:
+        raise HTTPException(status_code=400, detail="Invalid project file name")
+    resolved_root = root.expanduser().resolve()
+    target = (resolved_root / relative).resolve()
+    if not target.is_relative_to(resolved_root):
+        raise HTTPException(status_code=400, detail="Invalid project file name")
+    return target
+
+
+@app.post("/project/save")
+async def save_project(request: Request, name: str):
+    """Atomically save a browser-authored project file under the remote root."""
+    content_type = request.headers.get("content-type", "").split(";", 1)[0]
+    is_image = "/images/" in name.replace("\\", "/")
+    allowed = (
+        {"application/octet-stream", "image/jpeg", "image/png", "image/webp", "image/gif"}
+        if is_image
+        else {"application/json"}
+    )
+    if content_type not in allowed:
+        raise HTTPException(status_code=415, detail="Unsupported project content type")
+    maximum = 600 * 1024 * 1024
+    declared = request.headers.get("content-length")
+    if declared and (not declared.isdigit() or int(declared) > maximum):
+        raise HTTPException(status_code=413, detail="Project is too large")
+    content = await request.body()
+    if len(content) > maximum:
+        raise HTTPException(status_code=413, detail="Project is too large")
+    root = Path(os.environ.get("GEOLIBRE_REMOTE_PROJECT_ROOT", "/mnt/z/GeoLibre"))
+    target = _remote_project_target(name, root)
+    try:
+        await run_in_threadpool(_write_remote_project, target, content)
+    except OSError as error:
+        raise HTTPException(
+            status_code=500, detail=f"Could not save remote project: {error}"
+        ) from error
+    return {"path": str(target)}
 
 
 @app.post("/shutdown")

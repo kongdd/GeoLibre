@@ -236,6 +236,36 @@ export async function checkSidecarHealth(
   }
 }
 
+export async function saveProjectToRemote(
+  content: string | Uint8Array,
+  fileName: string,
+  baseUrl = DEFAULT_SIDECAR_URL,
+): Promise<string> {
+  const url = new URL(`${baseUrl}/project/save`);
+  url.searchParams.set("name", fileName);
+  let response: Response;
+  try {
+    response = await sidecarFetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          typeof content === "string" ? "application/json" : "application/octet-stream",
+      },
+      body: content as BodyInit,
+    });
+  } catch (error) {
+    throw sidecarConnectionError(baseUrl, error);
+  }
+  if (!response.ok) {
+    throw new Error(
+      await responseErrorMessage(response, `Remote save failed: HTTP ${response.status}`),
+    );
+  }
+  const result = (await response.json()) as { path?: unknown };
+  if (typeof result.path !== "string") throw new Error("Remote save returned no path.");
+  return result.path;
+}
+
 export async function fetchSidecarAlgorithms(
   baseUrl = DEFAULT_SIDECAR_URL,
 ): Promise<SidecarAlgorithm[]> {

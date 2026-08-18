@@ -200,6 +200,13 @@ body,
   padding-right: env(safe-area-inset-right);
 }
 
+/* Hug content on desktop (h-auto + max-height); shrink and scroll when the
+   dialog hits the viewport. flex-1 is only applied in the fullscreen query. */
+.field-collection-scroll {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* Field Collection is portalled under body, outside #root's safe-area padding.
    Keep it fullscreen on portrait phones, landscape phones, and coarse-pointer
    tablets rather than switching solely on viewport width. */
@@ -223,6 +230,10 @@ body,
     padding-top: max(1rem, env(safe-area-inset-top));
     padding-left: max(1rem, env(safe-area-inset-left));
     padding-right: max(3.5rem, calc(env(safe-area-inset-right) + 3rem));
+  }
+
+  .field-collection-scroll {
+    flex: 1 1 0;
   }
 
   .field-collection-scroll-content {

@@ -4,6 +4,7 @@ import {
   parseProject,
   type GeoLibreProject,
 } from "@geolibre/core";
+import { saveProjectToRemote as saveProjectToRemoteSidecar } from "@geolibre/processing";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -43,6 +44,8 @@ import {
   type StartupSnapshotSlot,
 } from "./startup-project-snapshot";
 import { IS_MAS_BUILD } from "./build-flags";
+import { REMOTE_PROJECT_ROOT } from "./file-names";
+import { externalizeProjectImages, hydrateProjectImages } from "./project-images";
 import type { DuckDbVectorFile } from "./duckdb-vector-loader";
 import {
   confirmLargeDataset,
@@ -2717,7 +2720,7 @@ export async function openProjectFile(): Promise<{
     filters: [{ name: "GeoLibre Project", extensions: ["geolibre", "json"] }],
   });
   if (!selected || typeof selected !== "string") return null;
-  const text = await readTextFile(selected);
+  const text = await hydrateRemoteProjectText(await readTextFile(selected), selected);
   const project = parseProject(text);
   return { project, path: selected, text };
 }
@@ -2941,7 +2944,42 @@ export async function openRecentProjectFile(
     throw error;
   }
 
-  return { project: parseProject(text), path, text };
+  return { project: parseProject(await hydrateRemoteProjectText(text, path)), path, text };
+}
+
+async function hydrateRemoteProjectText(content: string, path: string): Promise<string> {
+  if (!path.startsWith(`${REMOTE_PROJECT_ROOT}/`) || !content.includes('"images/')) {
+    return content;
+  }
+  const dir = path.slice(0, path.lastIndexOf("/"));
+  return hydrateProjectImages(content, async (relative) => {
+    try {
+      return await readFile(`${dir}/${relative}`);
+    } catch {
+      return null;
+    }
+  });
+}
+
+export async function saveRemoteProjectFile(content: string, path: string): Promise<string | null> {
+  const packed = externalizeProjectImages(content);
+  const dir = path.slice(0, path.lastIndexOf("/"));
+  const prefix = dir.slice(REMOTE_PROJECT_ROOT.length + 1);
+  if (!isTauri()) {
+    await saveProjectToRemoteSidecar(
+      packed.content,
+      `${prefix}/${path.slice(path.lastIndexOf("/") + 1)}`,
+    );
+    for (const file of packed.files) {
+      await saveProjectToRemoteSidecar(file.bytes, `${prefix}/${file.path}`);
+    }
+    return path;
+  }
+  if (packed.files.length > 0) await mkdir(`${dir}/images`, { recursive: true });
+  else await mkdir(dir, { recursive: true });
+  for (const file of packed.files) await writeFile(`${dir}/${file.path}`, file.bytes);
+  await writeTextFile(path, packed.content);
+  return path;
 }
 
 export async function saveProjectFile(

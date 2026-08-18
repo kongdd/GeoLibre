@@ -33,12 +33,20 @@ import {
   RecentProjectGoneError,
   saveProjectFile,
   saveProjectFileToPath,
+  saveRemoteProjectFile,
   saveStartupProjectSnapshot,
   saveTextFileWithFallback,
 } from "../lib/tauri-io";
 import { useDesktopSettingsStore } from "./useDesktopSettings";
 import { buildProjectHtml } from "../lib/html-export";
-import { ensureHtmlFileName, ensureProjectFileName } from "../lib/file-names";
+import {
+  ensureHtmlFileName,
+  ensureProjectFileName,
+  isRemoteProjectFile,
+  isRemoteProjectPath,
+  projectDataStorage,
+  remoteProjectFilePath,
+} from "../lib/file-names";
 import { mergeStringLists } from "../lib/string-lists";
 import { fetchProjectFromUrl } from "../lib/project-url";
 import { getShareFetch } from "../lib/share-fetch";
@@ -817,13 +825,18 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   };
 
   // Field-survey writes are queued so a slower older save can never overwrite
-  // a newer capture. The first native save asks the user where to create the
-  // project file; later saves update that same file.
+  // a newer capture. Remote projects also persist from the browser via the
+  // sidecar; local browser projects keep their existing explicit-save behavior.
   const persistFieldSurveyProject = (
     layersOverride?: GeoLibreLayer[]
   ): Promise<boolean> => {
     const write = async (): Promise<boolean> => {
-      if (!isTauri()) return true;
+      if (
+        !isTauri() &&
+        projectDataStorage(useAppStore.getState().metadata) !== "remote"
+      ) {
+        return true;
+      }
       try {
         const { project, projectPath } = buildCurrentProject(
           undefined,
@@ -848,11 +861,19 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
           );
           return false;
         }
+        const remotePath =
+          projectDataStorage(project.metadata) === "remote"
+            ? projectPath && isRemoteProjectFile(projectPath)
+              ? projectPath
+              : remoteProjectFilePath(project.name)
+            : null;
         const existingLocalPath =
-          projectPath && !isHttpUrl(projectPath) ? projectPath : null;
-        const path = existingLocalPath
-          ? await saveProjectFileToPath(content, existingLocalPath)
-          : await saveProjectFile(content, ensureProjectFileName(project.name));
+          !remotePath && projectPath && !isHttpUrl(projectPath) ? projectPath : null;
+        const path = remotePath
+          ? await saveRemoteProjectFile(content, remotePath)
+          : existingLocalPath
+            ? await saveProjectFileToPath(content, existingLocalPath)
+            : await saveProjectFile(content, ensureProjectFileName(project.name));
         if (!path) return false;
         if (path !== projectPath) {
           setProjectPath(path);
@@ -1143,9 +1164,18 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
       contentToSave = serializeForSave(projectToEgress);
     }
     if (contentToSave === null) return false;
-    // Projects opened from a URL have no writable path, so both Save and
-    // Save As fall back to the save dialog for them.
-    const existingLocalPath = projectPath && !isHttpUrl(projectPath) ? projectPath : null;
+    const remotePath =
+      projectDataStorage(project.metadata) === "remote"
+        ? projectPath && isRemoteProjectFile(projectPath)
+          ? projectPath
+          : remoteProjectFilePath(project.name)
+        : null;
+    // Projects opened from a URL, and remote projects switched back to local,
+    // have no writable local path, so Save and Save As use the save dialog.
+    const existingLocalPath =
+      !remotePath && projectPath && !isHttpUrl(projectPath) && !isRemoteProjectPath(projectPath)
+        ? projectPath
+        : null;
     // Browsers without the File System Access picker (Firefox, Safari) can only
     // download under a fixed name, so Save As (and a first Save) would otherwise
     // reuse a default name — exactly the bug users hit. Prompt for the name so
@@ -1170,8 +1200,9 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     if (useAppStore.getState().projectGeneration !== saveProjectGeneration) return false;
     let path: string | null;
     try {
-      path =
-        !options?.saveAs && existingLocalPath
+      path = remotePath
+        ? await saveRemoteProjectFile(contentToSave, remotePath)
+        : !options?.saveAs && existingLocalPath
           ? await saveProjectFileToPath(contentToSave, existingLocalPath, saveName)
           : await saveProjectFile(
               contentToSave,

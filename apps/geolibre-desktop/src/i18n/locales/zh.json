@@ -22,7 +22,11 @@
     "modified": "有未保存的更改",
     "notSaved": "尚未保存",
     "layers": "图层数",
-    "groups": "图层组数"
+    "groups": "图层组数",
+    "dataStorage": "数据存储",
+    "storageLocal": "本地",
+    "storageRemote": "远程",
+    "remoteStoragePath": "远程项目数据保存至 {{path}}。"
   },
   "browser": {
     "title": "浏览器",
