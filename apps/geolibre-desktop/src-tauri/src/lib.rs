@@ -289,6 +289,9 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init());
 
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_field_media::init());
+
     // The Earth Engine OAuth loopback listener is compiled out of the Apple App
     // Store builds (see the module gate at the top of this file); the stub
     // commands are stateless, so the state goes with it.

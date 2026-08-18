@@ -43,6 +43,7 @@ import {
   subscribeGeometryEdit,
   TIME_SLIDER_PLUGIN_ID,
   VIEWER_BLOCKED_PLUGIN_IDS,
+  FIELD_SURVEY_PLUGIN_ID,
 } from "@geolibre/plugins";
 import {
   convertGeoTiffToCog,
@@ -1280,6 +1281,15 @@ export function DesktopShell({
     // Same contract for the deck.gl overlay: re-attach it to the current map
     // and re-render any deckgl-viz layers a restored project carries.
     restoreDeckViz(appAPI, pluginManager.isActive(DECK_VIZ_PLUGIN_ID));
+    // Field Survey's toolbar menu is the entry point for collection, GPS, and
+    // basemap switch in the field workflow. The plugin does not use
+    // `activeByDefault` (that path skips `activate()` for already-active
+    // plugins, so its toolbar menu never registers), so activate it
+    // imperatively here once the map is ready. Safe to call repeatedly:
+    // `PluginManager.activate` is a no-op when the plugin is already active.
+    if (!pluginManager.isActive(FIELD_SURVEY_PLUGIN_ID)) {
+      pluginManager.activate(FIELD_SURVEY_PLUGIN_ID, appAPI);
+    }
     const search = window.location.search;
     void pluginManager
       .handleUrlParameters(new URLSearchParams(search), appAPI, `${projectGeneration}:${search}`)

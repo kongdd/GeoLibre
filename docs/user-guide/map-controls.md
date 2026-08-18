@@ -137,6 +137,8 @@ Comments are stored in the `.geolibre.json` file, so they travel with a shared o
 - **This device** — the browser or OS geolocation API. This is the default and needs no extra hardware.
 - **NMEA receiver (serial or Bluetooth)** — an external GPS/GNSS receiver, for survey-grade or high-rate positions. Choose a baud rate and use **Connect serial** or **Connect Bluetooth**; the dialog then reports the device name and a running count of parsed sentences and fixes.
 
+The Android native provider requests one fix per second; browser, iOS, and NMEA rates are controlled by their provider or receiver. **Min time** and **Min distance** control which fixes enter the log (both active thresholds must be met). **Simplify** is a metre tolerance applied only when saving or exporting: it removes redundant points along straight runs while retaining endpoints, turns, timestamps, and other metadata. Set any filter to `0` to disable it.
+
 !!! note "NMEA needs a Chromium browser"
     Reading a receiver uses the Web Serial and Web Bluetooth APIs, which Chromium browsers such as Chrome and Edge provide but Firefox and Safari do not. Most Bluetooth GPS receivers speak *classic* Bluetooth rather than Bluetooth Low Energy: pair those in your operating system's settings and they appear here as a serial port. Use **Connect Bluetooth** only for Bluetooth Low Energy receivers.
 

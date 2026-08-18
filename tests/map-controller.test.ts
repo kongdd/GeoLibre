@@ -1290,11 +1290,9 @@ describe("MapController built-in control positions", () => {
     const { map } = makeFakeMap();
     const controller = controllerWith(map);
 
-    // geolocate defaults to hidden, so setting its position just records it.
-    // The visible-control reposition path tears down and re-creates a real
-    // maplibregl control, whose constructor needs a DOM (`window`) that
-    // `node --test` does not provide, so it cannot be exercised here; the
-    // generic addControl/removeControl passthrough below covers the map calls.
+    // Hide it first: the visible-control reposition path re-creates a real
+    // MapLibre control, whose constructor needs a DOM unavailable in node:test.
+    controller.setBuiltInControlVisible("geolocate", false);
     const ok = controller.setBuiltInControlPosition("geolocate", "bottom-right");
 
     assert.equal(ok, true);
@@ -1330,7 +1328,10 @@ describe("MapController built-in control positions", () => {
 // Internal surface used to drive the geolocate error handler in plain Node.
 interface GeolocateInternals {
   map: unknown;
-  geolocateControl: { handlers: Record<string, (e: unknown) => void> } | null;
+  geolocateControl: {
+    handlers: Record<string, (e: unknown) => void>;
+    options: unknown;
+  } | null;
   controlVisibility: Record<string, boolean>;
   addGeolocateControl(): boolean;
 }
@@ -1338,6 +1339,7 @@ interface GeolocateInternals {
 /** Minimal stand-in for maplibregl.GeolocateControl that records listeners. */
 class FakeGeolocateControl {
   handlers: Record<string, (e: unknown) => void> = {};
+  constructor(readonly options: unknown) {}
   on(event: string, fn: (e: unknown) => void): void {
     this.handlers[event] = fn;
   }
@@ -1371,7 +1373,10 @@ function stubNavigator(
 function controllerWithGeolocate(): {
   controller: MapController;
   internal: GeolocateInternals;
-  firstControl: { handlers: Record<string, (e: unknown) => void> };
+  firstControl: {
+    handlers: Record<string, (e: unknown) => void>;
+    options: unknown;
+  };
 } {
   const controller = createMapController();
   const internal = controller as unknown as GeolocateInternals;
@@ -1388,12 +1393,22 @@ describe("MapController geolocate permission-denied recovery", () => {
   const originalCreate = geolocateControlFactory.create;
 
   function withStubbedControl(run: () => Promise<void>): Promise<void> {
-    geolocateControlFactory.create = () =>
-      new FakeGeolocateControl() as unknown as maplibregl.GeolocateControl;
+    geolocateControlFactory.create = (options) =>
+      new FakeGeolocateControl(options) as unknown as maplibregl.GeolocateControl;
     return run().finally(() => {
       geolocateControlFactory.create = originalCreate;
     });
   }
+
+  it("uses a fresh one-shot fix so every tap recenters", () =>
+    withStubbedControl(async () => {
+      const { firstControl } = controllerWithGeolocate();
+      assert.deepEqual(firstControl.options, {
+        positionOptions: { enableHighAccuracy: true, maximumAge: 0 },
+        fitBoundsOptions: { maxZoom: 17, duration: 500 },
+        trackUserLocation: false,
+      });
+    }));
 
   it("re-creates the control when the prompt was dismissed (state 'prompt')", () =>
     withStubbedControl(async () => {

@@ -5,6 +5,8 @@ import {
   applySelectionMode,
   featureSelectionId,
   invertSelection,
+  nearestPointFeatureSelectionId,
+  pointFeatureSelectionId,
   matchFeaturesByExpression,
   useAppStore,
 } from "@geolibre/core";
@@ -37,6 +39,33 @@ describe("featureSelectionId", () => {
     assert.equal(featureSelectionId(point([0, 0], {}, "abc"), 3), "abc");
     assert.equal(featureSelectionId(point([0, 0], {}, 7), 3), "7");
     assert.equal(featureSelectionId(point([0, 0]), 3), "3");
+  });
+});
+
+describe("pointFeatureSelectionId", () => {
+  it("maps a rendered point back to its source id or legacy index", () => {
+    const features = [
+      point([120.1, 30.2], { notes: ["legacy"] }),
+      point([120.2, 30.3], {}, "station-b"),
+    ];
+    assert.equal(pointFeatureSelectionId(features, [120.1, 30.2]), "0");
+    assert.equal(pointFeatureSelectionId(features, [120.2, 30.3]), "station-b");
+    assert.equal(pointFeatureSelectionId(features, [0, 0]), null);
+  });
+});
+
+describe("nearestPointFeatureSelectionId", () => {
+  it("uses the clicked coordinate instead of the first rendered feature", () => {
+    const features = [
+      point([120.1, 30.2], {}, "station-a"),
+      point([120.2, 30.3], {}, "station-b"),
+      point([120.3, 30.4]),
+    ];
+    assert.equal(
+      nearestPointFeatureSelectionId(features, [120.21, 30.31]),
+      "station-b"
+    );
+    assert.equal(nearestPointFeatureSelectionId(features, [120.29, 30.39]), "2");
   });
 });
 

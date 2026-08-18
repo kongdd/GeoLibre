@@ -96,7 +96,7 @@ function PluginToolbarMenu({ menu, chrome }: { menu: GeoLibreToolbarMenu; chrome
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
-          className={chrome.secondaryButtonClass}
+          className={menu.mobileVisible ? chrome.buttonClass : chrome.secondaryButtonClass}
           variant="ghost"
           size={chrome.buttonSize}
           aria-label={label}

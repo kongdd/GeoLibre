@@ -54,26 +54,29 @@ These are gated by a user-agent `isMobile()` check (which already matches
 iPhone/iPad) so they never appear and then fail. Everything else runs
 client-side.
 
-## Location permission (required)
+## Location and photo permissions (required)
 
-This is the one place iOS differs sharply from Android. Android's geolocation
-plugin declares the runtime permission and the OS shows a generic dialog; **iOS
-terminates the app the instant it requests location if no usage-description
-string is present.** GeoLibre supplies it in
-`src-tauri/Info.ios.plist`:
+This is one place iOS differs sharply from Android. Android plugins or the system file
+chooser declare/mediate their runtime permissions; **iOS terminates the app when a protected
+API is used without its usage-description string.** GeoLibre therefore keeps these durable
+keys in `src-tauri/Info.ios.plist`:
 
 ```xml
 <key>NSLocationWhenInUseUsageDescription</key>
 <string>GeoLibre uses your location to center the map, capture GPS points during Field Collection, and record GPS tracks.</string>
+<key>NSCameraUsageDescription</key>
+<string>GeoLibre uses the camera to attach photos to Field Collection observations.</string>
+<key>NSPhotoLibraryUsageDescription</key>
+<string>GeoLibre lets you select photos to attach to Field Collection observations.</string>
+<key>NSMotionUsageDescription</key>
+<string>GeoLibre uses device orientation to record the camera azimuth for Field Collection photos.</string>
 ```
 
 Tauri merges `Info.ios.plist` into the generated
 `gen/apple/geolibre-desktop_iOS/Info.plist` at build time. `gen/apple` is git-ignored, so
-this file is the durable home for the string — the same reason Android's manifest
-permissions come from the plugin rather than a hand-edited, regenerated manifest.
-It covers all three location consumers: Field Collection, GPS Tracking, and the
-Controls → GeoLocate map control. After a build, confirm the key survived the
-merge (see *Build* below).
+this file is the durable home for the strings. They cover Field Collection, GPS Tracking,
+and the Controls → GeoLocate map control. After a build, confirm all four keys survived
+the merge (see *Build* below).
 
 ## Minimum iOS version
 
@@ -210,18 +213,21 @@ npx tauri ios build --no-sign          # unsigned .ipa + .xcarchive (no Apple ac
 
 - `gen/apple` is generated (git-ignored) and regenerated on demand. `init`
   applies `tauri.ios.conf.json` (bundle id, deployment target, drops the Python
-  backend); `Info.ios.plist` (the location string) is merged later, by
-  `tauri ios build`/`dev`, as noted below.
+  backend); `Info.ios.plist` (location, camera, photo-library, and motion strings) is
+  merged later by `tauri ios build`/`dev`, as noted below.
 - The app is named **GeoLibre** on iOS (the desktop build is "GeoLibre Desktop")
   and uses the bundle id **`org.geolibre.app`**, both set via
   `src-tauri/tauri.ios.conf.json` — the same override pattern and reasoning as
   Android (`identifier` in `tauri.conf.json` stays `org.geolibre.desktop` so it
   keeps keying desktop settings and the Linux/macOS packaging).
-- Verify the location string landed after a build:
+- Verify the protected-API strings landed after a build:
 
   ```bash
-  /usr/libexec/PlistBuddy -c 'Print :NSLocationWhenInUseUsageDescription' \
-    src-tauri/gen/apple/geolibre-desktop_iOS/Info.plist
+  for key in NSLocationWhenInUseUsageDescription NSCameraUsageDescription \
+    NSPhotoLibraryUsageDescription NSMotionUsageDescription; do
+    /usr/libexec/PlistBuddy -c "Print :$key" \
+      src-tauri/gen/apple/geolibre-desktop_iOS/Info.plist
+  done
   ```
 
   The merge happens during `tauri ios build`/`dev`, **not** during `ios init` —
@@ -348,6 +354,18 @@ registered devices, `debugging` for development).
   select the device, and Run (a free Apple ID allows 7-day device signing).
 - **Testers:** distribute a signed build through **TestFlight** (upload the `.ipa`
   via Xcode Organizer or Transporter, then invite testers in App Store Connect).
+
+### Field Survey device acceptance
+
+On a physical iPhone or iPad, deny and then restore location and motion/orientation
+permissions, capture a GPS observation, point the device at a known compass direction, and
+tap **Take photo**. On the first permission request, tap **Take photo** again after the
+in-app confirmation so the camera opens within a fresh user gesture. Confirm the stored
+azimuth is plausible, then select multiple
+library images and add a 12–25 MB image to exercise EXIF reading and downscaling. Save the observation, reopen **Saved observations**, add and
+remove photos and notes, update it, and reopen the project offline. Confirm denial produces
+an actionable message rather than a crash and inspect the device console for permission or
+memory errors. Simulator and Playwright runs do not replace this camera/permission check.
 
 ## Publishing to the App Store
 

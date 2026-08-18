@@ -15,7 +15,7 @@ export const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:pointer-events-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className,
     )}
     {...props}
@@ -27,11 +27,13 @@ export const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
     bodyClassName?: string;
+    /** Accessible label for the built-in close button. */
+    closeLabel?: React.ReactNode;
     /** Optional node rendered as a sibling of the body (e.g. a resize grip),
      * positioned by the caller relative to the content box. */
     resizeHandle?: React.ReactNode;
   }
->(({ className, bodyClassName, resizeHandle, children, ...props }, ref) => (
+>(({ className, bodyClassName, closeLabel = "Close", resizeHandle, children, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -50,7 +52,7 @@ export const DialogContent = React.forwardRef<
           colour never paints) but wrong the moment one is added. */}
       <DialogPrimitive.Close className="absolute end-4 top-4 rounded-sm opacity-70 ring-offset-popover transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring">
         <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
+        <span className="sr-only">{closeLabel}</span>
       </DialogPrimitive.Close>
       {resizeHandle}
     </DialogPrimitive.Content>

@@ -15,6 +15,9 @@ import { migrateLegacyAiEnv } from "../lib/assistant/profiles";
 import { ASSISTANT_PROVIDER_IDS } from "../lib/assistant/provider";
 import type { AssistantProfile } from "../lib/assistant/provider";
 
+const STARTUP_LAST_DEFAULT_MIGRATION_KEY =
+  `${DESKTOP_SETTINGS_STORAGE_KEY}.startupLastDefaultV1`;
+
 /** Notification-granularity options, in order. Single source of truth. */
 export const UPDATE_NOTIFICATION_LEVELS: readonly UpdateNotificationLevel[] = [
   "all",
@@ -201,7 +204,7 @@ export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = {
 };
 
 export const DEFAULT_STARTUP_SETTINGS: StartupSettings = {
-  mode: "default",
+  mode: "last",
   projectPath: null,
   projectName: null,
   globeByDefault: true,
@@ -233,6 +236,16 @@ export const EXPERIENCE_LEVELS: readonly ExperienceLevel[] = [
   "intermediate",
   "advanced",
 ];
+
+export function migrateLegacyStartupDefault(settings: unknown): unknown {
+  if (!settings || typeof settings !== "object") return settings;
+  const candidate = settings as Record<string, unknown>;
+  if (!candidate.startup || typeof candidate.startup !== "object") return settings;
+  const startup = candidate.startup as Record<string, unknown>;
+  return startup.mode === "default"
+    ? { ...candidate, startup: { ...startup, mode: "last" } }
+    : settings;
+}
 
 export function normalizeDesktopSettings(settings: unknown): DesktopSettings {
   if (!settings || typeof settings !== "object") {
@@ -271,7 +284,9 @@ function normalizeStartupSettings(startup: unknown): StartupSettings {
   if (!startup || typeof startup !== "object") return DEFAULT_STARTUP_SETTINGS;
   const candidate = startup as Partial<StartupSettings>;
   const mode: StartupProjectMode =
-    candidate.mode === "last" || candidate.mode === "specific" ? candidate.mode : "default";
+    candidate.mode === "default" || candidate.mode === "last" || candidate.mode === "specific"
+      ? candidate.mode
+      : DEFAULT_STARTUP_SETTINGS.mode;
   const projectPath =
     typeof candidate.projectPath === "string" && candidate.projectPath.trim()
       ? candidate.projectPath.trim()
@@ -281,7 +296,7 @@ function normalizeStartupSettings(startup: unknown): StartupSettings {
       ? candidate.projectName.trim()
       : null;
   return {
-    mode: mode === "specific" && !projectPath ? "default" : mode,
+    mode: mode === "specific" && !projectPath ? DEFAULT_STARTUP_SETTINGS.mode : mode,
     projectPath,
     projectName,
     globeByDefault: typeof candidate.globeByDefault === "boolean" ? candidate.globeByDefault : true,
@@ -461,8 +476,18 @@ function loadDesktopSettings(): DesktopSettings {
 
   try {
     const stored = window.localStorage.getItem(DESKTOP_SETTINGS_STORAGE_KEY);
-    if (!stored) return DEFAULT_DESKTOP_SETTINGS;
-    return normalizeDesktopSettings(JSON.parse(stored) as unknown);
+    const needsMigration =
+      window.localStorage.getItem(STARTUP_LAST_DEFAULT_MIGRATION_KEY) !== "1";
+    if (!stored) {
+      window.localStorage.setItem(STARTUP_LAST_DEFAULT_MIGRATION_KEY, "1");
+      return DEFAULT_DESKTOP_SETTINGS;
+    }
+    const settings = JSON.parse(stored) as unknown;
+    if (needsMigration) {
+      window.localStorage.setItem(STARTUP_LAST_DEFAULT_MIGRATION_KEY, "1");
+      return normalizeDesktopSettings(migrateLegacyStartupDefault(settings));
+    }
+    return normalizeDesktopSettings(settings);
   } catch {
     return DEFAULT_DESKTOP_SETTINGS;
   }

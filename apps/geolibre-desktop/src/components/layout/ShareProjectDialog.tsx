@@ -31,6 +31,7 @@ import {
   MAX_PROJECT_TITLE_LENGTH,
   resolveShareBaseUrl,
   shareHostLabel,
+  shareServerAllowsAnonymousProjects,
   ShareUploadError,
   uploadProjectToShare,
   type ShareUploadErrorCode,
@@ -156,10 +157,12 @@ export function ShareProjectDialog({
   const [redactedCount, setRedactedCount] = useState(0);
   const [readiness, setReadiness] = useState<ShareReadinessReport | null>(null);
   const [readinessState, setReadinessState] = useState<"idle" | "checking" | "failed">("idle");
+  const [anonymousProjects, setAnonymousProjects] = useState<boolean | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
 
   const hasToken = shareToken.trim().length > 0;
+  const canUpload = hasToken || anonymousProjects === true;
   const titleValid = isShareableTitle(title);
 
   // Reset transient state whenever the dialog is (re)opened so a prior result or
@@ -176,11 +179,21 @@ export function ShareProjectDialog({
       setResult(null);
       setCopied(false);
       setRedactedCount(0);
+      setAnonymousProjects(null);
     } else {
       abortRef.current?.abort();
       abortRef.current = null;
     }
   }, [open, currentTitle]);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    void shareServerAllowsAnonymousProjects({ signal: controller.signal }).then((enabled) => {
+      if (!controller.signal.aborted) setAnonymousProjects(enabled);
+    });
+    return () => controller.abort();
+  }, [open]);
 
   // Pre-flight the project's data sources when the dialog opens, so the author
   // learns that a layer will be empty for everyone else *before* the upload
@@ -189,7 +202,7 @@ export function ShareProjectDialog({
   // Advisory only: it never gates the Share button. An author sharing an
   // intranet map with intranet colleagues is doing the right thing.
   useEffect(() => {
-    if (!open || !hasToken) return;
+    if (!open || !canUpload) return;
     const controller = new AbortController();
     setReadinessState("checking");
     setReadiness(null);
@@ -220,7 +233,7 @@ export function ShareProjectDialog({
         setReadinessState("failed");
       });
     return () => controller.abort();
-  }, [open, hasToken]);
+  }, [open, canUpload]);
 
   // Cancel a pending "copied" reset if the dialog unmounts mid-window.
   useEffect(
@@ -330,7 +343,11 @@ export function ShareProjectDialog({
           <DialogDescription>{t("share.description", { shareHost })}</DialogDescription>
         </DialogHeader>
 
-        {!hasToken ? (
+        {!hasToken && anonymousProjects === null ? (
+          <div className="flex justify-center p-6" role="status">
+            <Loader2 className="h-5 w-5 animate-spin" />
+          </div>
+        ) : !canUpload ? (
           <div className="space-y-4 text-sm">
             <p className="text-muted-foreground">{t("share.setupIntro", { shareHost })}</p>
             <ol className="space-y-3">
@@ -418,7 +435,9 @@ export function ShareProjectDialog({
               >
                 <option value="unlisted">{t("share.visibilityUnlisted")}</option>
                 <option value="public">{t("share.visibilityPublic")}</option>
-                <option value="private">{t("share.visibilityPrivate")}</option>
+                {anonymousProjects ? null : (
+                  <option value="private">{t("share.visibilityPrivate")}</option>
+                )}
               </Select>
             </div>
 

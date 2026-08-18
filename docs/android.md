@@ -206,6 +206,26 @@ expires.
 For live development with hot reload, connect the device and run
 `npm run tauri android dev`.
 
+### Field Survey device acceptance
+
+Run this checklist on at least one Android phone after changing Field Survey:
+
+1. Start from a clean permission state, open **Field Survey → Field Collection**, tap
+   **Use GPS**, deny location, and confirm the dialog remains usable with a permission
+   message. Grant precise location in Android Settings and confirm retrying captures a fix.
+2. Capture an observation, point the phone at a known compass direction, tap **Take photo**,
+   and confirm the rear-camera flow returns a thumbnail with a plausible azimuth. Tap
+   **Add images** and select several gallery images; EXIF `GPSImgDirection` is used when present.
+3. Add a 12–25 MB camera image. It must be downscaled to an embedded JPEG without freezing;
+   saving must remain disabled while processing.
+4. Save, close, reopen **Saved observations**, edit the record, add and remove photos and
+   notes, update it, then reopen it again to verify persistence.
+5. Save and reopen the `.geolibre.json` project. Confirm the observation and attachments
+   remain available offline, and inspect `adb logcat` for crashes or permission errors.
+
+A browser/Playwright test covers the same data lifecycle and large-image compression, but
+it does not replace this OS camera and runtime-permission check.
+
 ### On an emulator
 
 ```bash

@@ -1635,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "geolibre-desktop"
-version = "2.6.0"
+version = "2.6.1"
 dependencies = [
  "chrono",
  "duckdb",
@@ -1649,6 +1649,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tauri-plugin-field-media",
  "tauri-plugin-fs",
  "tauri-plugin-geolocation",
  "tauri-plugin-http",
@@ -4680,6 +4681,15 @@ dependencies = [
  "tauri-plugin-fs",
  "thiserror 2.0.18",
  "url",
+]
+
+[[package]]
+name = "tauri-plugin-field-media"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

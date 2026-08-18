@@ -384,6 +384,18 @@ export {
 } from "./plugins/deckgl-viz/store-layer";
 export { VIEWER_BLOCKED_PLUGIN_IDS } from "./viewer-plugins";
 export {
+  FIELD_SURVEY_NEW_PROJECT_EVENT,
+  FIELD_SURVEY_OPEN_COLLECTION_EVENT,
+  FIELD_SURVEY_OPEN_GPS_EVENT,
+  FIELD_SURVEY_OPEN_PHOTOS_EVENT,
+  FIELD_SURVEY_OPEN_BASEMAPS_EVENT,
+  FIELD_SURVEY_MENU_ICON,
+  FIELD_SURVEY_PLUGIN_ID,
+  fieldSurveyPlugin,
+  setFieldSurveyLabels,
+  type FieldSurveyLabels,
+} from "./plugins/field-survey";
+export {
   maplibreAnnotationsPlugin,
   ANNOTATIONS_PLUGIN_ID,
   ANNOTATIONS_SOURCE_KIND,

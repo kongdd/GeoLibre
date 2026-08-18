@@ -3,11 +3,18 @@ import {
   applyMatchedSelection,
   createPointerElevationResolver,
   effectiveLayerRenderState,
+  fieldCollectionAttachmentKeysFromMetadata,
   getActiveEllipsoid,
   isDuckDBQueryLayer,
   NETCDF_IMAGE_SOURCE_KIND,
+  PHOTO_BEARINGS_PROPERTY,
   PHOTO_FULL_PROPERTY,
+  PHOTO_NAMES_PROPERTY,
   PHOTO_PROPERTY,
+  PHOTOS_PROPERTY,
+  nearestPointFeatureSelectionId,
+  pointFeatureSelectionId,
+  resolvePhotoSource,
   useAppStore,
   type GeoLibreLayer,
   type PointerElevationResolver,
@@ -153,10 +160,61 @@ function stringifyIdentifyValue(value: unknown): string {
   return String(value);
 }
 
+// Field Survey's toolbar listens for this event and opens the collection dialog.
+const OPEN_FIELD_COLLECTION_EVENT = "geolibre:field-survey:open-collection";
+
+interface IdentifyPhotoKeys {
+  photo: string;
+  photos: string;
+  photoBearings: string;
+  photoNames: string;
+}
+
+function identifyPhotoKeys(layer?: GeoLibreLayer): IdentifyPhotoKeys {
+  const keys = fieldCollectionAttachmentKeysFromMetadata(layer?.metadata);
+  if (keys) {
+    return {
+      photo: keys.photo,
+      photos: keys.photos,
+      photoBearings: keys.photoBearings,
+      photoNames: keys.photoNames,
+    };
+  }
+  return {
+    photo: PHOTO_PROPERTY,
+    photos: PHOTOS_PROPERTY,
+    photoBearings: PHOTO_BEARINGS_PROPERTY,
+    photoNames: PHOTO_NAMES_PROPERTY,
+  };
+}
+
+const INLINE_PHOTO_SOURCE = /^data:image\/(?!svg)[\w.+-]+;base64,/i;
+
+function isPhotoSource(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    (INLINE_PHOTO_SOURCE.test(value) || value.startsWith("content://"))
+  );
+}
+
+function loadPhotoButton(
+  button: HTMLButtonElement,
+  image: HTMLImageElement,
+  source: string,
+  alt: string,
+): void {
+  void resolvePhotoSource(source).then((resolved) => {
+    if (!resolved) return;
+    image.src = resolved;
+    button.addEventListener("click", () => openPhotoFullscreen(resolved, alt));
+  });
+}
+
 function createIdentifyPopupElement(
   layerName: string,
   properties: Record<string, unknown>,
   featureId?: string | number,
+  photoKeys: IdentifyPhotoKeys = identifyPhotoKeys(),
 ): HTMLElement {
   const root = document.createElement("div");
   root.className =
@@ -171,6 +229,31 @@ function createIdentifyPopupElement(
   rows.className = "geolibre-identify-popup-rows pe-2";
   root.appendChild(rows);
 
+  const rawPhotoNames = properties[photoKeys.photoNames];
+  const photoNames = Array.isArray(rawPhotoNames)
+    ? rawPhotoNames.filter((value): value is string => typeof value === "string")
+    : [];
+  const photoName = (index: number, fallback: string) => photoNames[index] || fallback;
+  const rawPhotoBearings = properties[photoKeys.photoBearings];
+  const photoBearings = Array.isArray(rawPhotoBearings)
+    ? rawPhotoBearings.map((value) =>
+        typeof value === "number" && Number.isFinite(value)
+          ? Math.round((((value % 360) + 360) % 360) * 10) / 10
+          : null,
+      )
+    : [];
+  const appendBearing = (button: HTMLButtonElement, index: number) => {
+    const bearing = photoBearings[index];
+    if (bearing == null) return;
+    button.classList.add("relative");
+    const badge = document.createElement("span");
+    badge.className =
+      "pointer-events-none absolute bottom-1 start-1 rounded bg-black/65 px-1.5 py-0.5 text-xs text-white";
+    badge.textContent = `${Number(bearing.toFixed(1))}°`;
+    badge.title = "Camera azimuth";
+    button.appendChild(badge);
+  };
+
   const appendRow = (key: string, value: unknown) => {
     const row = document.createElement("div");
     row.className = "grid grid-cols-[minmax(5rem,0.45fr)_1fr] gap-2 border-t py-1";
@@ -181,6 +264,7 @@ function createIdentifyPopupElement(
 
     const valueCell = document.createElement("div");
     valueCell.className = "break-words text-foreground";
+    const inlineImages = Array.isArray(value) ? value.filter(isPhotoSource) : [];
     // Render known KML description structures as sanitized markup. Requiring a
     // supported tag keeps ordinary text such as "Elevation <500m>" intact.
     if (
@@ -193,13 +277,43 @@ function createIdentifyPopupElement(
       // thumbnail) as an actual thumbnail rather than a multi-kilobyte string.
       // Match base64 raster images only, excluding SVG (which can carry scripts)
       // so an untrusted GeoJSON value can't smuggle one in.
-    } else if (typeof value === "string" && /^data:image\/(?!svg)[\w.+-]+;base64,/i.test(value)) {
+    } else if (isPhotoSource(value)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "block max-w-full cursor-zoom-in rounded focus-visible:ring-2";
+      const alt = photoName(0, key);
+      button.setAttribute("aria-label", `Open ${alt}`);
       const image = document.createElement("img");
-      image.src = value;
-      image.alt = key;
+      image.alt = alt;
       image.loading = "lazy";
       image.className = "max-h-40 max-w-full rounded";
-      valueCell.appendChild(image);
+      loadPhotoButton(button, image, value, alt);
+      button.appendChild(image);
+      if (key === photoKeys.photo) appendBearing(button, 0);
+      valueCell.appendChild(button);
+    } else if (
+      Array.isArray(value) &&
+      inlineImages.length > 0 &&
+      inlineImages.length === value.length
+    ) {
+      const gallery = document.createElement("div");
+      gallery.className = "grid grid-cols-2 gap-1";
+      for (const [index, src] of inlineImages.entries()) {
+        const alt = photoName(index + 1, `${key} ${index + 1}`);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "cursor-zoom-in rounded focus-visible:ring-2";
+        button.setAttribute("aria-label", `Open ${alt}`);
+        const image = document.createElement("img");
+        image.alt = alt;
+        image.loading = "lazy";
+        image.className = "h-24 w-full rounded object-cover";
+        loadPhotoButton(button, image, src, alt);
+        button.appendChild(image);
+        if (key === photoKeys.photos) appendBearing(button, index + 1);
+        gallery.appendChild(button);
+      }
+      valueCell.appendChild(gallery);
     } else {
       valueCell.textContent = stringifyIdentifyValue(value);
     }
@@ -216,7 +330,11 @@ function createIdentifyPopupElement(
   // the empty-state check so a feature whose only property is `photo_full` still
   // reports "No attributes" rather than rendering an empty panel.
   const entries = Object.entries(properties).filter(
-    ([key]) => key !== PHOTO_FULL_KEY && !key.startsWith("__geolibre_"),
+    ([key]) =>
+      key !== PHOTO_FULL_KEY &&
+      key !== photoKeys.photoBearings &&
+      key !== photoKeys.photoNames &&
+      !key.startsWith("__geolibre_"),
   );
   if (entries.length === 0 && featureId == null) {
     const empty = document.createElement("div");
@@ -653,8 +771,12 @@ function identifyStyleLayerIds(layer: GeoLibreLayer): string[] {
 }
 
 function findFeatureId(layer: GeoLibreLayer, feature: maplibregl.MapGeoJSONFeature): string | null {
+  if (!layer.geojson) return feature.id == null ? null : String(feature.id);
+  if (feature.geometry.type === "Point") {
+    const id = pointFeatureSelectionId(layer.geojson.features, feature.geometry.coordinates);
+    if (id != null) return id;
+  }
   if (feature.id != null) return String(feature.id);
-  if (!layer.geojson) return null;
 
   const properties = feature.properties ?? {};
   const propertyKeys = Object.keys(properties);
@@ -1687,6 +1809,16 @@ export const MapCanvas = memo(function MapCanvas({
         .join(","),
     [layers],
   );
+  const fieldCollectionPointLayerKey = useMemo(
+    () =>
+      layers
+        .filter(
+          (layer) => layer.type === "geojson" && layer.metadata.fieldCollection === true,
+        )
+        .map((layer) => layer.id)
+        .join(","),
+    [layers],
+  );
 
   useEffect(() => {
     const layer = layers.find((item) => item.id === selectedLayerId);
@@ -1889,7 +2021,12 @@ export const MapCanvas = memo(function MapCanvas({
 
         selectFeature(result.featureId);
         showIdentifyPopup(
-          createIdentifyPopupElement(layer.name, result.properties, result.featureId),
+          createIdentifyPopupElement(
+            layer.name,
+            result.properties,
+            result.featureId,
+            identifyPhotoKeys(layer),
+          ),
         );
         return;
       }
@@ -1912,7 +2049,12 @@ export const MapCanvas = memo(function MapCanvas({
       selectFeature(featureId);
 
       showIdentifyPopup(
-        createIdentifyPopupElement(layer.name, feature.properties ?? {}, featureId ?? feature.id),
+        createIdentifyPopupElement(
+          layer.name,
+          feature.properties ?? {},
+          featureId ?? feature.id,
+          identifyPhotoKeys(layer),
+        ),
       );
     };
 
@@ -1930,6 +2072,97 @@ export const MapCanvas = memo(function MapCanvas({
       if (!featureSelectionActive.current) map.getCanvas().style.cursor = "";
     };
   }, [identifyLayerId, layers, selectFeature]);
+
+  // Open a Field Collection observation directly from its point on the map.
+  // The dialog already owns attribute/photo display and editing, so the map only
+  // selects the feature and uses the existing Field Survey open event.
+  useEffect(() => {
+    const map = controller.current?.getMap();
+    if (!map) return;
+    const layerIds = fieldCollectionPointLayerKey
+      ? fieldCollectionPointLayerKey.split(",")
+      : [];
+    if (layerIds.length === 0) return;
+
+    const bindings: Array<{
+      id: string;
+      click: (event: maplibregl.MapLayerMouseEvent) => void;
+      enter: () => void;
+      leave: () => void;
+    }> = [];
+    const unbind = () => {
+      for (const binding of bindings) {
+        map.off("click", binding.id, binding.click);
+        map.off("mouseenter", binding.id, binding.enter);
+        map.off("mouseleave", binding.id, binding.leave);
+      }
+      bindings.length = 0;
+    };
+    const bind = () => {
+      unbind();
+      for (const layerId of layerIds) {
+        for (const id of [circleLayerId(layerId), markerLayerId(layerId)]) {
+          if (!map.getLayer(id)) continue;
+          const click = (event: maplibregl.MapLayerMouseEvent) => {
+            if (
+              useAppStore.getState().identifyLayerId ||
+              featureSelectionActive.current ||
+              map.getCanvas().dataset.fieldCollectionCapture === "true"
+            )
+              return;
+            const feature = event.features?.[0];
+            if (!feature) return;
+            const store = useAppStore.getState();
+            const layer = store.layers.find((candidate) => candidate.id === layerId);
+            if (!layer) return;
+            const featureId = layer.geojson
+              ? nearestPointFeatureSelectionId(layer.geojson.features, [
+                  event.lngLat.lng,
+                  event.lngLat.lat,
+                ])
+              : findFeatureId(layer, feature);
+            if (featureId == null) return;
+            store.selectLayer(layerId);
+            store.selectFeature(featureId);
+            window.dispatchEvent(
+              new CustomEvent(OPEN_FIELD_COLLECTION_EVENT, {
+                detail: { layerId, featureId },
+              }),
+            );
+          };
+          const enter = () => {
+            if (
+              !useAppStore.getState().identifyLayerId &&
+              !featureSelectionActive.current &&
+              map.getCanvas().dataset.fieldCollectionCapture !== "true"
+            ) {
+              map.getCanvas().style.cursor = "pointer";
+            }
+          };
+          const leave = () => {
+            if (
+              !useAppStore.getState().identifyLayerId &&
+              !featureSelectionActive.current &&
+              map.getCanvas().dataset.fieldCollectionCapture !== "true"
+            ) {
+              map.getCanvas().style.cursor = "";
+            }
+          };
+          bindings.push({ id, click, enter, leave });
+          map.on("click", id, click);
+          map.on("mouseenter", id, enter);
+          map.on("mouseleave", id, leave);
+        }
+      }
+    };
+
+    bind();
+    window.addEventListener("geolibre-layer-labels-change", bind);
+    return () => {
+      window.removeEventListener("geolibre-layer-labels-change", bind);
+      unbind();
+    };
+  }, [fieldCollectionPointLayerKey]);
 
   // Geotagged photos: clicking a photo point opens a resizable popup with the
   // photo, without needing the Identify tool. The popup is photo-specific, and

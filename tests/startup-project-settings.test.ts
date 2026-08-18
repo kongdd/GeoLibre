@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   DEFAULT_STARTUP_SETTINGS,
+  migrateLegacyStartupDefault,
   normalizeDesktopSettings,
 } from "../apps/geolibre-desktop/src/hooks/useDesktopSettings";
 import {
@@ -12,13 +13,26 @@ import {
 } from "../apps/geolibre-desktop/src/lib/startup-project";
 
 describe("startup project settings", () => {
-  it("defaults to the normal untitled workspace", () => {
+  it("defaults to reopening the most recent project", () => {
     assert.deepEqual(normalizeDesktopSettings({}).startup, {
-      mode: "default",
+      mode: "last",
       projectPath: null,
       projectName: null,
       globeByDefault: true,
     });
+  });
+
+  it("migrates the old empty-workspace default to reopen-last once", () => {
+    assert.equal(
+      normalizeDesktopSettings(
+        migrateLegacyStartupDefault({ startup: { mode: "default" } }),
+      ).startup.mode,
+      "last",
+    );
+    assert.equal(
+      normalizeDesktopSettings({ startup: { mode: "default" } }).startup.mode,
+      "default",
+    );
   });
 
   it("normalizes a selected startup project", () => {
@@ -48,13 +62,17 @@ describe("startup project settings", () => {
     );
   });
 
-  it("rejects a specific mode without a path and unknown modes", () => {
+  it("falls back to the default mode for invalid settings", () => {
     assert.equal(
       normalizeDesktopSettings({ startup: { mode: "specific" } }).startup.mode,
-      "default",
+      "last",
     );
     assert.equal(
       normalizeDesktopSettings({ startup: { mode: "tampered" } }).startup.mode,
+      "last",
+    );
+    assert.equal(
+      normalizeDesktopSettings({ startup: { mode: "default" } }).startup.mode,
       "default",
     );
   });
@@ -134,7 +152,11 @@ describe("planStartup", () => {
       planStartup({
         explicitPayload: false,
         desktop: true,
-        settings: { ...DEFAULT_STARTUP_SETTINGS, globeByDefault: false },
+        settings: {
+          ...DEFAULT_STARTUP_SETTINGS,
+          mode: "default",
+          globeByDefault: false,
+        },
         recentProjects: recent(PINNED),
       }),
       { kind: "default", projection: "mercator" },
@@ -148,7 +170,10 @@ describe("startupProjectPath", () => {
 
   it("restores nothing in default mode", () => {
     assert.equal(
-      startupProjectPath(DEFAULT_STARTUP_SETTINGS, recent("/tmp/a.geolibre.json")),
+      startupProjectPath(
+        { ...DEFAULT_STARTUP_SETTINGS, mode: "default" },
+        recent("/tmp/a.geolibre.json")
+      ),
       null,
     );
   });

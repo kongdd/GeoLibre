@@ -289,6 +289,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   // dialog is open would overwrite the pending prompt and strand the first
   // call's unresolved promise.
   const isSavingRef = useRef(false);
+  const fieldSurveySaveQueueRef = useRef<Promise<boolean>>(Promise.resolve(true));
 
   // Settling a prompt means resolving its promise and clearing the dialog
   // state. Each pattern lives here once so the dialog handlers further down and
@@ -815,6 +816,68 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     }
   };
 
+  // Field-survey writes are queued so a slower older save can never overwrite
+  // a newer capture. The first native save asks the user where to create the
+  // project file; later saves update that same file.
+  const persistFieldSurveyProject = (
+    layersOverride?: GeoLibreLayer[]
+  ): Promise<boolean> => {
+    const write = async (): Promise<boolean> => {
+      if (!isTauri()) return true;
+      try {
+        const { project, projectPath } = buildCurrentProject(
+          undefined,
+          layersOverride
+        );
+        // Direct serializeProject (matching the known-good stash path) so a
+        // serialization failure does not surface a generic `actionError` on
+        // every auto-save: the outer catch reports it as a field-survey save
+        // failure. The #1829 string-length guard stays as a local try/catch.
+        let content: string;
+        try {
+          content = serializeProject(
+            excludeHiddenFieldsFromProject(project)
+          );
+        } catch (error) {
+          console.error("Failed to serialize field-survey project", error);
+          setActionError(
+            error instanceof Error &&
+              SERIALIZATION_TOO_LARGE_PATTERN.test(error.message)
+              ? t("toolbar.error.projectTooLargeToSave")
+              : t("toolbar.error.couldNotSaveProject"),
+          );
+          return false;
+        }
+        const existingLocalPath =
+          projectPath && !isHttpUrl(projectPath) ? projectPath : null;
+        const path = existingLocalPath
+          ? await saveProjectFileToPath(content, existingLocalPath)
+          : await saveProjectFile(content, ensureProjectFileName(project.name));
+        if (!path) return false;
+        if (path !== projectPath) {
+          setProjectPath(path);
+          rememberRecentProject({
+            path,
+            name: project.name,
+            openedAt: new Date().toISOString(),
+          });
+        }
+        return true;
+      } catch (error) {
+        console.error("Failed to persist field-survey project", error);
+        setActionError(
+          error instanceof Error
+            ? error.message
+            : t("toolbar.error.couldNotSaveProject")
+        );
+        return false;
+      }
+    };
+    const queued = fieldSurveySaveQueueRef.current.then(write, write);
+    fieldSurveySaveQueueRef.current = queued;
+    return queued;
+  };
+
   // Ask whether to strip credentials (environment variables, geocoder keys,
   // layer tokens) before writing the file. The promise resolves when the user
   // picks an option in the dialog.
@@ -1300,6 +1363,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     handleOpenRecent,
     buildCurrentProject,
     buildEmbeddedProject,
+    persistFieldSurveyProject,
     handleSave,
     handleSaveAs,
     handleExportHtml,

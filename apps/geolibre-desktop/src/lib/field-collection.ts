@@ -13,16 +13,36 @@
  */
 import {
   coerceAttributeFormValue,
+  FIELD_COLLECTION_ATTACHMENT_KEYS_METADATA,
+  fieldCollectionAttachmentKeysFromMetadata,
   getAttributeFormField,
+  PHOTO_BEARINGS_PROPERTY,
   PHOTO_FULL_PROPERTY,
+  PHOTO_NAMES_PROPERTY,
   PHOTO_PROPERTY,
+  PHOTOS_PROPERTY,
   type AttributeFormConfig,
+  type FieldCollectionAttachmentKeys,
+  type LabelStyle,
 } from "@geolibre/core";
-import type { Feature, FeatureCollection, LineString, Point, Polygon } from "geojson";
+import type {
+  Feature,
+  FeatureCollection,
+  LineString,
+  Point,
+  Polygon,
+} from "geojson";
+import { normalizePhotoBearing } from "./photo-bearing";
 
 // Re-exported so existing importers (geotagged-photos, tests) keep a single
 // import site; the canonical definitions live in @geolibre/core's schema.
-export { PHOTO_FULL_PROPERTY, PHOTO_PROPERTY };
+export {
+  PHOTO_BEARINGS_PROPERTY,
+  PHOTO_FULL_PROPERTY,
+  PHOTO_NAMES_PROPERTY,
+  PHOTO_PROPERTY,
+  PHOTOS_PROPERTY,
+};
 
 /** The attribute field kinds a collection form can declare. */
 export type FieldType = "text" | "number" | "date" | "choice";
@@ -52,15 +72,212 @@ export interface CollectionSchema {
 export const FIELD_COLLECTION_FLAG = "fieldCollection";
 export const COLLECTION_SCHEMA_KEY = "collectionSchema";
 export const COLLECTION_GEOMETRY_KEY = "collectionGeometry";
+export const COLLECTION_ATTACHMENT_KEYS_KEY =
+  FIELD_COLLECTION_ATTACHMENT_KEYS_METADATA;
 
-/** Property keys the tool manages itself; user fields must not reuse them. */
-export const RESERVED_PROPERTY_KEYS: readonly string[] = [PHOTO_PROPERTY, PHOTO_FULL_PROPERTY];
+/** Namespaced properties managed by Field Collection for one observation. */
+export const OBSERVATION_NAME_PROPERTY = "geolibre_observation_name";
 
-/**
- * Cap embedded photos so a capture session can't bloat the project JSON without
- * bound. Photos are stored inline as data URLs, so this is a hard per-photo cap.
- */
+/** Default map label for every saved point observation. */
+export function observationLabelStyle(labels: LabelStyle): LabelStyle {
+  return {
+    ...labels,
+    enabled: true,
+    field: OBSERVATION_NAME_PROPERTY,
+    allowOverlap: true,
+    anchor: "bottom",
+    offsetY: -3.25,
+  };
+}
+
+export const NOTES_PROPERTY = "geolibre_notes";
+const PHOTO_FALLBACK_PROPERTY = "geolibre_photo_attachment";
+const PHOTOS_FALLBACK_PROPERTY = "geolibre_photo_attachments";
+const PHOTO_BEARINGS_FALLBACK_PROPERTY = "geolibre_photo_directions";
+const PHOTO_NAMES_FALLBACK_PROPERTY = "geolibre_photo_file_names";
+const NOTES_FALLBACK_PROPERTY = "geolibre_note_entries";
+
+/** Inline-image keys hidden from ordinary attribute-table columns. */
+export const RESERVED_IMAGE_PROPERTY_KEYS: readonly string[] = [
+  PHOTO_PROPERTY,
+  PHOTO_FULL_PROPERTY,
+  PHOTOS_PROPERTY,
+];
+
+/** All system-managed keys; custom form fields must not reuse them. */
+export const RESERVED_PROPERTY_KEYS: readonly string[] = [
+  ...RESERVED_IMAGE_PROPERTY_KEYS,
+  OBSERVATION_NAME_PROPERTY,
+  NOTES_PROPERTY,
+  PHOTO_BEARINGS_PROPERTY,
+  PHOTO_NAMES_PROPERTY,
+  PHOTO_FALLBACK_PROPERTY,
+  PHOTOS_FALLBACK_PROPERTY,
+  PHOTO_BEARINGS_FALLBACK_PROPERTY,
+  PHOTO_NAMES_FALLBACK_PROPERTY,
+  NOTES_FALLBACK_PROPERTY,
+];
+
+/** Hard limits keep inline attachments from growing project JSON without bound. */
 export const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
+export const MAX_TOTAL_PHOTO_BYTES = 10 * 1024 * 1024;
+export const MAX_PHOTOS_PER_FEATURE = 10;
+export const MAX_NOTES_PER_FEATURE = 20;
+export const MAX_NOTE_LENGTH = 4_000;
+
+const INLINE_IMAGE_DATA_URL =
+  /^data:image\/(?!svg\+xml(?:;|,))[-+.\w]+;base64,[a-z\d+/]+={0,2}$/i;
+
+export type CollectionAttachmentKeys = FieldCollectionAttachmentKeys;
+
+function isInlineImage(value: unknown): value is string {
+  return typeof value === "string" && INLINE_IMAGE_DATA_URL.test(value);
+}
+
+/** Image columns hidden by the attribute table for one layer. */
+export function collectionImagePropertyKeys(
+  metadata: Record<string, unknown> | null | undefined
+): Set<string> {
+  const keys = new Set<string>(RESERVED_IMAGE_PROPERTY_KEYS);
+  const explicit = fieldCollectionAttachmentKeysFromMetadata(metadata);
+  if (explicit) {
+    keys.add(explicit.photo);
+    keys.add(explicit.photos);
+    keys.add(explicit.photoNames);
+  }
+  return keys;
+}
+
+/** Resolve collision-free attachment keys deterministically for one schema. */
+export function collectionAttachmentKeys(
+  occupiedKeys: Iterable<string> = [],
+  unavailableFallbackKeys: Iterable<string> = []
+): CollectionAttachmentKeys {
+  const taken = new Set(occupiedKeys);
+  const unavailableFallbacks = new Set(unavailableFallbackKeys);
+  const availableKey = (preferred: string, fallback: string): string => {
+    if (!taken.has(preferred)) {
+      taken.add(preferred);
+      return preferred;
+    }
+    let key = fallback;
+    let suffix = 2;
+    while (taken.has(key) || unavailableFallbacks.has(key))
+      key = `${fallback}_${suffix++}`;
+    taken.add(key);
+    return key;
+  };
+  return {
+    photo: availableKey(PHOTO_PROPERTY, PHOTO_FALLBACK_PROPERTY),
+    photos: availableKey(PHOTOS_PROPERTY, PHOTOS_FALLBACK_PROPERTY),
+    photoBearings: availableKey(
+      PHOTO_BEARINGS_PROPERTY,
+      PHOTO_BEARINGS_FALLBACK_PROPERTY
+    ),
+    photoNames: availableKey(
+      PHOTO_NAMES_PROPERTY,
+      PHOTO_NAMES_FALLBACK_PROPERTY
+    ),
+    notes: availableKey(NOTES_PROPERTY, NOTES_FALLBACK_PROPERTY),
+  };
+}
+
+/** Build backward-compatible feature properties for repeatable notes and photos. */
+export function collectionAttachments(
+  photos: readonly string[],
+  notes: readonly string[],
+  occupiedKeys: Iterable<string> = [],
+  attachmentKeys?: CollectionAttachmentKeys,
+  photoBearings: readonly (number | null)[] = [],
+  photoNames: readonly string[] = []
+): Record<string, unknown> {
+  const cleanPhotos = photos
+    .map((photo, index) => ({
+      photo,
+      bearing: normalizePhotoBearing(photoBearings[index]),
+      name: photoNames[index]?.trim() ?? "",
+    }))
+    .filter(({ photo }) => Boolean(photo));
+  // Admission limits are enforced by the capture UI. Serialization deliberately
+  // keeps every existing value byte-for-byte so editing an ordinary field can
+  // never truncate imported or legacy attachments that exceed today's limits.
+  const cleanNotes = notes.filter((note) => note.trim().length > 0);
+  const keys = attachmentKeys ?? collectionAttachmentKeys(occupiedKeys);
+  const properties: Record<string, unknown> = {};
+  if (cleanPhotos.length > 0) properties[keys.photo] = cleanPhotos[0].photo;
+  if (cleanPhotos.length > 1) {
+    properties[keys.photos] = cleanPhotos.slice(1).map(({ photo }) => photo);
+  }
+  const bearings = cleanPhotos.map(({ bearing }) => bearing);
+  if (bearings.some((bearing) => bearing != null))
+    properties[keys.photoBearings] = bearings;
+  const names = cleanPhotos.map(({ name }) => name);
+  if (names.some(Boolean)) properties[keys.photoNames] = names;
+  if (cleanNotes.length > 0) properties[keys.notes] = cleanNotes;
+  return properties;
+}
+
+/** Read editable attachments from a captured feature. */
+export function readCollectionAttachments(
+  properties: Record<string, unknown> | null | undefined,
+  occupiedKeys: Iterable<string> = [],
+  attachmentKeys?: CollectionAttachmentKeys
+): {
+  photos: string[];
+  photoBearings: (number | null)[];
+  photoNames: string[];
+  notes: string[];
+} {
+  const keys = attachmentKeys ?? collectionAttachmentKeys(occupiedKeys);
+  const props = properties ?? {};
+  const photos: string[] = [];
+  const primaryPhoto = props[keys.photo];
+  if (typeof primaryPhoto === "string" && primaryPhoto)
+    photos.push(primaryPhoto);
+  const additionalPhotos = props[keys.photos];
+  if (Array.isArray(additionalPhotos)) {
+    photos.push(
+      ...additionalPhotos.filter(
+        (value): value is string => typeof value === "string"
+      )
+    );
+  }
+  const rawBearings = props[keys.photoBearings];
+  const photoBearings = photos.map((_, index) =>
+    normalizePhotoBearing(
+      Array.isArray(rawBearings) ? rawBearings[index] : null
+    )
+  );
+  const rawNames = props[keys.photoNames];
+  const photoNames = photos.map((_, index) =>
+    Array.isArray(rawNames) && typeof rawNames[index] === "string"
+      ? rawNames[index]
+      : ""
+  );
+  const rawNotes = props[keys.notes];
+  const notes = Array.isArray(rawNotes)
+    ? rawNotes.filter((value): value is string => typeof value === "string")
+    : typeof rawNotes === "string" && rawNotes
+    ? [rawNotes]
+    : [];
+  return { photos, photoBearings, photoNames, notes };
+}
+
+/** Remove only system attachment properties, preserving schema and foreign data. */
+export function withoutCollectionAttachments(
+  properties: Record<string, unknown> | null | undefined,
+  occupiedKeys: Iterable<string> = [],
+  attachmentKeys?: CollectionAttachmentKeys
+): Record<string, unknown> {
+  const copy = { ...(properties ?? {}) };
+  const keys = attachmentKeys ?? collectionAttachmentKeys(occupiedKeys);
+  delete copy[keys.photo];
+  delete copy[keys.photos];
+  delete copy[keys.photoBearings];
+  delete copy[keys.photoNames];
+  delete copy[keys.notes];
+  return copy;
+}
 
 /** Minimal structural view of a layer — avoids coupling this module to the store. */
 export interface CollectionLayerLike {
@@ -75,16 +292,115 @@ export function emptyFeatureCollection(): FeatureCollection {
 
 /** True when a layer is a field-collection target (geojson + tagged metadata). */
 export function isCollectionLayer(layer: CollectionLayerLike): boolean {
-  return layer.type === "geojson" && layer.metadata?.[FIELD_COLLECTION_FLAG] === true;
+  return (
+    layer.type === "geojson" && layer.metadata?.[FIELD_COLLECTION_FLAG] === true
+  );
 }
 
 /** Read a layer's stored collection schema, defaulting to an empty schema. */
 export function getSchema(layer: CollectionLayerLike): CollectionSchema {
   const raw = layer.metadata?.[COLLECTION_SCHEMA_KEY];
-  if (raw && typeof raw === "object" && Array.isArray((raw as Partial<CollectionSchema>).fields)) {
+  if (
+    raw &&
+    typeof raw === "object" &&
+    Array.isArray((raw as Partial<CollectionSchema>).fields)
+  ) {
     return raw as CollectionSchema;
   }
   return { fields: [] };
+}
+
+/**
+ * Read stable attachment keys. Explicit metadata is authoritative. For older
+ * projects without metadata, preferred keys are claimed only when every value
+ * has the strict shape written by Field Collection; ambiguous imported columns
+ * are left untouched and a collision-safe fallback is selected instead.
+ */
+export function getCollectionAttachmentKeys(
+  layer: CollectionLayerLike
+): CollectionAttachmentKeys {
+  const storedKeys = fieldCollectionAttachmentKeysFromMetadata(layer.metadata);
+  if (storedKeys) return storedKeys;
+
+  const occupied = getSchema(layer).fields.map((field) => field.key);
+  const features = layer.geojson?.features ?? [];
+  const valuesFor = (key: string): unknown[] =>
+    features
+      .filter((feature) =>
+        Object.prototype.hasOwnProperty.call(feature.properties ?? {}, key)
+      )
+      .map((feature) => feature.properties?.[key]);
+  const propertyKeys = features.flatMap((feature) =>
+    Object.keys(feature.properties ?? {})
+  );
+
+  const primaryValues = valuesFor(PHOTO_PROPERTY);
+  const primaryOwned =
+    primaryValues.length > 0 && primaryValues.every(isInlineImage);
+  const additionalValues = valuesFor(PHOTOS_PROPERTY);
+  const additionalOwned =
+    additionalValues.length > 0 &&
+    additionalValues.every(
+      (value) =>
+        Array.isArray(value) && value.length > 0 && value.every(isInlineImage)
+    );
+  const noteValues = valuesFor(NOTES_PROPERTY);
+  // A string array alone cannot prove ownership (imported GeoJSON commonly has
+  // array-valued columns). Only associate legacy notes when the same layer also
+  // contains a strictly recognized Field Collection image attachment.
+  const notesOwned =
+    (primaryOwned || additionalOwned) &&
+    noteValues.length > 0 &&
+    noteValues.every(
+      (value) =>
+        Array.isArray(value) &&
+        value.length > 0 &&
+        value.every(
+          (note) => typeof note === "string" && note.trim().length > 0
+        )
+    );
+  const bearingValues = valuesFor(PHOTO_BEARINGS_PROPERTY);
+  const bearingsOwned =
+    bearingValues.length > 0 &&
+    bearingValues.every((value, valueIndex) => {
+      if (!Array.isArray(value)) return false;
+      const feature = features.filter((candidate) =>
+        Object.prototype.hasOwnProperty.call(
+          candidate.properties ?? {},
+          PHOTO_BEARINGS_PROPERTY
+        )
+      )[valueIndex];
+      const primary = feature?.properties?.[PHOTO_PROPERTY];
+      const additional = feature?.properties?.[PHOTOS_PROPERTY];
+      const photoCount =
+        (isInlineImage(primary) ? 1 : 0) +
+        (Array.isArray(additional) && additional.every(isInlineImage)
+          ? additional.length
+          : 0);
+      return (
+        photoCount > 0 &&
+        value.length === photoCount &&
+        value.every(
+          (bearing) =>
+            bearing == null ||
+            (typeof bearing === "number" &&
+              Number.isFinite(bearing) &&
+              bearing >= 0 &&
+              bearing < 360)
+        )
+      );
+    });
+
+  const foreignPreferred = [
+    !primaryOwned && primaryValues.length > 0 ? PHOTO_PROPERTY : null,
+    !additionalOwned && additionalValues.length > 0 ? PHOTOS_PROPERTY : null,
+    !bearingsOwned && bearingValues.length > 0 ? PHOTO_BEARINGS_PROPERTY : null,
+    !notesOwned && noteValues.length > 0 ? NOTES_PROPERTY : null,
+  ].filter((key): key is string => key != null);
+  return collectionAttachmentKeys(
+    [...occupied, ...foreignPreferred],
+    propertyKeys
+  );
 }
 
 /** Read a layer's captured geometry type, defaulting to `point`. */
@@ -104,13 +420,16 @@ export function minVertices(geometry: GeometryType): number {
 export function collectionMetadata(
   schema: CollectionSchema,
   geometry: GeometryType = "point",
-  existing: Record<string, unknown> = {},
+  existing: Record<string, unknown> = {}
 ): Record<string, unknown> {
   return {
     ...existing,
     [FIELD_COLLECTION_FLAG]: true,
     [COLLECTION_SCHEMA_KEY]: schema,
     [COLLECTION_GEOMETRY_KEY]: geometry,
+    [COLLECTION_ATTACHMENT_KEYS_KEY]: collectionAttachmentKeys(
+      schema.fields.map((field) => field.key)
+    ),
   };
 }
 
@@ -118,7 +437,10 @@ export function collectionMetadata(
  * Slugify a human label into a safe property key, made unique against `taken`.
  * Empty/symbol-only labels fall back to `field`, then `field_2`, `field_3`, …
  */
-export function slugifyKey(label: string, taken: Iterable<string> = []): string {
+export function slugifyKey(
+  label: string,
+  taken: Iterable<string> = []
+): string {
   const base =
     label
       .trim()
@@ -142,7 +464,7 @@ export function buildSchema(
     type: FieldType;
     required?: boolean;
     options?: string[];
-  }>,
+  }>
 ): CollectionSchema {
   const fields: CollectionField[] = [];
   // Reserve system-managed property keys so a user field (e.g. a "Photo" label
@@ -182,7 +504,10 @@ export function parseOptions(text: string): string[] {
 }
 
 /** Normalize a raw form string into the typed value stored on the feature. */
-export function coerceValue(type: FieldType, raw: string): string | number | null {
+export function coerceValue(
+  type: FieldType,
+  raw: string
+): string | number | null {
   const trimmed = raw.trim();
   if (trimmed === "") return null;
   if (type === "number") {
@@ -202,7 +527,7 @@ export interface ValidationResult {
 /** Validate raw form values against a schema before building a feature. */
 export function validateForm(
   schema: CollectionSchema,
-  values: Record<string, string>,
+  values: Record<string, string>
 ): ValidationResult {
   const errors: Record<string, string> = {};
   for (const field of schema.fields) {
@@ -231,7 +556,7 @@ export function validateForm(
 export function buildProperties(
   schema: CollectionSchema,
   values: Record<string, string>,
-  extra: Record<string, unknown> = {},
+  extra: Record<string, unknown> = {}
 ): Record<string, unknown> {
   const props: Record<string, unknown> = {};
   for (const field of schema.fields) {
@@ -251,13 +576,15 @@ export function buildPropertiesWithForm(
   schema: CollectionSchema,
   values: Record<string, string>,
   form: AttributeFormConfig | undefined,
-  extra: Record<string, unknown> = {},
+  extra: Record<string, unknown> = {}
 ): Record<string, unknown> {
   const props: Record<string, unknown> = {};
   for (const field of schema.fields) {
     const config = getAttributeFormField(form, field.key);
     const raw = values[field.key] ?? "";
-    const v = config ? coerceAttributeFormValue(config, raw) : coerceValue(field.type, raw);
+    const v = config
+      ? coerceAttributeFormValue(config, raw)
+      : coerceValue(field.type, raw);
     if (v !== null) props[field.key] = v;
   }
   return { ...props, ...extra };
@@ -267,7 +594,7 @@ export function buildPropertiesWithForm(
 export function makePointFeature(
   lng: number,
   lat: number,
-  properties: Record<string, unknown>,
+  properties: Record<string, unknown>
 ): Feature<Point> {
   return {
     type: "Feature",
@@ -279,7 +606,7 @@ export function makePointFeature(
 /** Construct a GeoJSON LineString feature from captured vertices. */
 export function makeLineFeature(
   coords: Vertex[],
-  properties: Record<string, unknown>,
+  properties: Record<string, unknown>
 ): Feature<LineString> {
   return {
     type: "Feature",
@@ -294,7 +621,7 @@ export function makeLineFeature(
  */
 export function makePolygonFeature(
   coords: Vertex[],
-  properties: Record<string, unknown>,
+  properties: Record<string, unknown>
 ): Feature<Polygon> {
   const ring: Vertex[] = coords.map((c) => [...c] as Vertex);
   const first = ring[0];
@@ -313,7 +640,7 @@ export function makePolygonFeature(
 export function buildGeometryFeature(
   geometry: GeometryType,
   coords: Vertex[],
-  properties: Record<string, unknown>,
+  properties: Record<string, unknown>
 ): Feature {
   if (geometry === "line") return makeLineFeature(coords, properties);
   if (geometry === "polygon") return makePolygonFeature(coords, properties);
@@ -322,24 +649,111 @@ export function buildGeometryFeature(
   return makePointFeature(pt[0], pt[1], properties);
 }
 
+/** Read editable vertices from a feature of the layer's configured geometry. */
+export function featureVertices(
+  feature: Feature,
+  geometry: GeometryType
+): Vertex[] | null {
+  let raw: unknown;
+  if (geometry === "point" && feature.geometry?.type === "Point") {
+    raw = [feature.geometry.coordinates];
+  } else if (geometry === "line" && feature.geometry?.type === "LineString") {
+    raw = feature.geometry.coordinates;
+  } else if (geometry === "polygon" && feature.geometry?.type === "Polygon") {
+    raw = feature.geometry.coordinates[0];
+  } else return null;
+  if (!Array.isArray(raw)) return null;
+
+  const vertices = raw
+    .filter(
+      (coord): coord is number[] =>
+        Array.isArray(coord) &&
+        coord.length >= 2 &&
+        Number.isFinite(coord[0]) &&
+        Number.isFinite(coord[1])
+    )
+    .map((coord) => [coord[0], coord[1]] as Vertex);
+  if (geometry === "polygon" && vertices.length > 1) {
+    const first = vertices[0];
+    const last = vertices.at(-1)!;
+    if (first[0] === last[0] && first[1] === last[1]) vertices.pop();
+  }
+  return vertices.length >= minVertices(geometry) ? vertices : null;
+}
+
+/** Find a selected observation by its GeoJSON id, or by its legacy array index. */
+export function findCollectionFeatureIndex(
+  features: readonly Feature[],
+  selectedId: string
+): number {
+  const byId = features.findIndex(
+    (feature) => feature.id != null && String(feature.id) === selectedId
+  );
+  if (byId >= 0) return byId;
+  const index = Number(selectedId);
+  return Number.isInteger(index) && index >= 0 && index < features.length
+    ? index
+    : -1;
+}
+
+/** Delete one feature immutably; an invalid index leaves the collection unchanged. */
+export function removeFeature(
+  fc: FeatureCollection,
+  index: number
+): FeatureCollection {
+  if (!Number.isInteger(index) || index < 0 || index >= fc.features.length)
+    return fc;
+  return {
+    ...fc,
+    features: fc.features.filter((_, i) => i !== index),
+  };
+}
+
+/** Replace one feature immutably; an invalid index leaves the collection unchanged. */
+export function replaceFeature(
+  fc: FeatureCollection,
+  index: number,
+  feature: Feature
+): FeatureCollection {
+  if (!Number.isInteger(index) || index < 0 || index >= fc.features.length)
+    return fc;
+  return {
+    ...fc,
+    features: fc.features.map((current, i) =>
+      i === index ? feature : current
+    ),
+  };
+}
+
 /**
  * A GeoJSON preview of in-progress drawing: a vertex point per coordinate, the
  * connecting line, and — for a polygon with enough vertices — the closed,
  * fillable ring so the user sees the finished shape before saving.
  */
-export function drawPreview(geometry: GeometryType, coords: Vertex[]): FeatureCollection {
-  const features: Feature[] = coords.map((c, i) => makePointFeature(c[0], c[1], { index: i }));
+export function drawPreview(
+  geometry: GeometryType,
+  coords: Vertex[]
+): FeatureCollection {
+  const features: Feature[] = coords.map((c, i) =>
+    makePointFeature(c[0], c[1], { index: i })
+  );
   if (geometry === "polygon" && coords.length >= 3) {
     features.push(makePolygonFeature(coords, {}));
     // Close the dashed stroke so it matches the filled ring (back to the start).
     features.push(makeLineFeature([...coords, coords[0]], {}));
-  } else if ((geometry === "line" || geometry === "polygon") && coords.length >= 2) {
+  } else if (
+    (geometry === "line" || geometry === "polygon") &&
+    coords.length >= 2
+  ) {
     features.push(makeLineFeature(coords, {}));
   }
   return { type: "FeatureCollection", features };
 }
 
 /** Return a new FeatureCollection with `feature` appended (immutably). */
-export function appendFeature(fc: FeatureCollection, feature: Feature): FeatureCollection {
+export function appendFeature(
+  fc: FeatureCollection,
+  feature: Feature
+): FeatureCollection {
   return { type: "FeatureCollection", features: [...fc.features, feature] };
 }

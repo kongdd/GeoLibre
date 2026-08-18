@@ -28,6 +28,8 @@ import {
   setAnnotationLabels,
   setBasemapControlLabels,
   setGeoEditorLabels,
+  getActiveBasemapControl,
+  BASEMAP_CONTROL_PLUGIN_ID,
   setGraticuleLabels,
   setH3Labels,
   setS2Labels,
@@ -45,6 +47,13 @@ import {
   setHuggingFaceLabels,
   setSourceCoopLabels,
   setReverseGeocodeLabels,
+  setFieldSurveyLabels,
+  FIELD_SURVEY_NEW_PROJECT_EVENT,
+  FIELD_SURVEY_OPEN_COLLECTION_EVENT,
+  FIELD_SURVEY_OPEN_GPS_EVENT,
+  FIELD_SURVEY_OPEN_PHOTOS_EVENT,
+  FIELD_SURVEY_OPEN_BASEMAPS_EVENT,
+  FIELD_SURVEY_PLUGIN_ID,
   setStacLabels,
   setTimelapseLabels,
   DECK_VIZ_PLUGIN_ID,
@@ -226,6 +235,14 @@ export function TopToolbar({
   // and cannot call t() itself, so push the translated popup strings into it
   // here and refresh them whenever the active language changes.
   useEffect(() => {
+    setFieldSurveyLabels({
+      menu: t("fieldSurvey.menu"),
+      fieldCollection: t("fieldSurvey.fieldCollection"),
+      gpsTracking: t("fieldSurvey.gpsTracking"),
+      insertPhotos: t("fieldSurvey.insertPhotos"),
+      basemaps: t("fieldSurvey.basemaps"),
+      newProject: t("fieldSurvey.newProject"),
+    });
     setReverseGeocodeLabels({
       lookingUp: t("geocode.reverseLookingUp"),
       noAddress: t("geocode.reverseNoAddress"),
@@ -1009,6 +1026,7 @@ export function TopToolbar({
     previewEffectsSettings,
     commitEffectsSettings,
   } = usePluginRegistry();
+  const fieldSurveyActive = isActive(FIELD_SURVEY_PLUGIN_ID);
   // Plugin ids hidden by the active UI profile (issue #500). Recompute only when
   // the profile changes so the Plugins menu can drop them.
   const uiProfile = useDesktopSettingsStore((state) => state.desktopSettings.uiProfile);
@@ -1136,6 +1154,10 @@ export function TopToolbar({
   const [aboutOpen, setAboutOpen] = useState(false);
   const [printLayoutOpen, setPrintLayoutOpen] = useState(false);
   const [fieldCollectionOpen, setFieldCollectionOpen] = useState(false);
+  const [fieldCollectionTarget, setFieldCollectionTarget] = useState<{
+    layerId: string;
+    featureId: string;
+  } | null>(null);
   const [gpsTrackingOpen, setGpsTrackingOpen] = useState(false);
   const [recordTourOpen, setRecordTourOpen] = useState(false);
   const [recordVideoOpen, setRecordVideoOpen] = useState(false);
@@ -1144,6 +1166,57 @@ export function TopToolbar({
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [checkForUpdatesRequest, setCheckForUpdatesRequest] = useState(0);
+
+  useEffect(() => {
+    const openCollection = (event: Event) => {
+      if (viewer || !fieldSurveyActive) return;
+      const detail = (event as CustomEvent<unknown>).detail;
+      setFieldCollectionTarget(
+        detail &&
+          typeof detail === "object" &&
+          typeof (detail as { layerId?: unknown }).layerId === "string" &&
+          typeof (detail as { featureId?: unknown }).featureId === "string"
+          ? (detail as { layerId: string; featureId: string })
+          : null
+      );
+      setFieldCollectionOpen(true);
+    };
+    const openGps = () => {
+      if (!viewer && fieldSurveyActive) setGpsTrackingOpen(true);
+    };
+    const openPhotos = () => {
+      if (!viewer && fieldSurveyActive) openAddDataKind("photos");
+    };
+    const openBasemaps = () => {
+      if (viewer || !fieldSurveyActive) return;
+      if (!isActive(BASEMAP_CONTROL_PLUGIN_ID)) {
+        toggle(BASEMAP_CONTROL_PLUGIN_ID, appApi);
+      } else {
+        getActiveBasemapControl()?.expand();
+      }
+    };
+    const newProject = () => {
+      if (!viewer && fieldSurveyActive) setNewProjectDialogOpen(true);
+    };
+    window.addEventListener(FIELD_SURVEY_OPEN_COLLECTION_EVENT, openCollection);
+    window.addEventListener(FIELD_SURVEY_OPEN_GPS_EVENT, openGps);
+    window.addEventListener(FIELD_SURVEY_OPEN_PHOTOS_EVENT, openPhotos);
+    window.addEventListener(FIELD_SURVEY_OPEN_BASEMAPS_EVENT, openBasemaps);
+    window.addEventListener(FIELD_SURVEY_NEW_PROJECT_EVENT, newProject);
+    return () => {
+      window.removeEventListener(FIELD_SURVEY_OPEN_COLLECTION_EVENT, openCollection);
+      window.removeEventListener(FIELD_SURVEY_OPEN_GPS_EVENT, openGps);
+      window.removeEventListener(FIELD_SURVEY_OPEN_PHOTOS_EVENT, openPhotos);
+      window.removeEventListener(FIELD_SURVEY_OPEN_BASEMAPS_EVENT, openBasemaps);
+      window.removeEventListener(FIELD_SURVEY_NEW_PROJECT_EVENT, newProject);
+    };
+  }, [appApi, fieldSurveyActive, isActive, openAddDataKind, toggle, viewer]);
+
+  useEffect(() => {
+    if (fieldSurveyActive) return;
+    setFieldCollectionOpen(false);
+    setGpsTrackingOpen(false);
+  }, [fieldSurveyActive]);
 
   const resetRuntimeControlsForNewProject = () => {
     closeMaplibreComponentControls(appApi);
@@ -1944,7 +2017,10 @@ export function TopToolbar({
         open={newProjectDialogOpen}
         onOpenChange={setNewProjectDialogOpen}
         onSaveCurrentProject={projectFiles.handleSave}
-        onProjectCreated={resetRuntimeControlsForNewProject}
+        onProjectCreated={() => {
+          resetRuntimeControlsForNewProject();
+          if (fieldSurveyActive) void projectFiles.persistFieldSurveyProject();
+        }}
       />
       {!viewer && isMenuVisible(uiProfile, "addData") && (
         <AddDataMenu
@@ -1991,8 +2067,14 @@ export function TopToolbar({
           onTogglePointerElevation={consent.handleTogglePointerElevation}
           onToggleClouds={() => toggle(CLOUDS_PLUGIN_ID, appApi)}
           onTogglePrecipitation={() => toggle(PRECIPITATION_PLUGIN_ID, appApi)}
-          onOpenFieldCollection={() => setFieldCollectionOpen(true)}
-          onOpenGpsTracking={() => setGpsTrackingOpen(true)}
+          onOpenFieldCollection={() => {
+            if (!isActive(FIELD_SURVEY_PLUGIN_ID)) toggle(FIELD_SURVEY_PLUGIN_ID, appApi);
+            if (isActive(FIELD_SURVEY_PLUGIN_ID)) setFieldCollectionOpen(true);
+          }}
+          onOpenGpsTracking={() => {
+            if (!isActive(FIELD_SURVEY_PLUGIN_ID)) toggle(FIELD_SURVEY_PLUGIN_ID, appApi);
+            if (isActive(FIELD_SURVEY_PLUGIN_ID)) setGpsTrackingOpen(true);
+          }}
           onOpenRecordTour={() => setRecordTourOpen(true)}
           onOpenRecordVideo={() => setRecordVideoOpen(true)}
         />
@@ -2045,22 +2127,26 @@ export function TopToolbar({
         onOpenChange={setPrintLayoutOpen}
         mapControllerRef={mapControllerRef}
       />
-      {/* Field Collection and GPS Tracking add features and layers to the
-          project, so they follow the Controls menu entries that open them out
-          of the read-only viewer preset. Record Tour and Record Video below
-          only read the map, so they stay. */}
-      {!viewer && (
+      {!viewer && fieldSurveyActive && (
         <FieldCollectionDialog
+          key={`field-collection-${projectGeneration}`}
           open={fieldCollectionOpen}
-          onOpenChange={setFieldCollectionOpen}
+          openFeature={fieldCollectionTarget}
+          onOpenChange={(next) => {
+            setFieldCollectionOpen(next);
+            if (!next) setFieldCollectionTarget(null);
+          }}
           mapControllerRef={mapControllerRef}
+          persistProject={projectFiles.persistFieldSurveyProject}
         />
       )}
-      {!viewer && (
+      {!viewer && fieldSurveyActive && (
         <GpsTrackingDialog
+          key={`gps-tracking-${projectGeneration}`}
           open={gpsTrackingOpen}
           onOpenChange={setGpsTrackingOpen}
           mapControllerRef={mapControllerRef}
+          persistProject={projectFiles.persistFieldSurveyProject}
         />
       )}
       <RecordTourDialog

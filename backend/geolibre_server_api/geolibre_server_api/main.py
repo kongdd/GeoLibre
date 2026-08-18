@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -51,6 +53,20 @@ Visibility = Literal["public", "unlisted", "private"]
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,37}[a-z0-9]$")
 SLUG_RE = re.compile(r"[^a-z0-9]+")
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+PROJECT_IMAGE_TYPES = {
+    "image/avif": "avif",
+    "image/gif": "gif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
+IMAGE_DATA_URL_RE = re.compile(
+    r"^data:(?P<mime>image/(?:avif|gif|jpeg|png|webp));base64,(?P<data>[A-Za-z0-9+/]+={0,2})$",
+    re.IGNORECASE,
+)
+ASSET_NAME_RE = re.compile(r"^[0-9a-f]{64}\.(?:avif|gif|jpg|png|webp)$")
+ANONYMOUS_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000"
+ANONYMOUS_USERNAME = "anonymous"
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +263,30 @@ def parse_content(content: str, max_bytes: int) -> dict:
     return value
 
 
+def externalize_project_images(value, project_id: str, storage, base_url: str):
+    """Store inline raster images in the project's asset folder and return URL references."""
+    if isinstance(value, dict):
+        return {
+            key: externalize_project_images(item, project_id, storage, base_url)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [externalize_project_images(item, project_id, storage, base_url) for item in value]
+    if not isinstance(value, str):
+        return value
+    match = IMAGE_DATA_URL_RE.fullmatch(value)
+    if not match:
+        return value
+    try:
+        data = base64.b64decode(match.group("data"), validate=True)
+    except (binascii.Error, ValueError):
+        return value
+    mime = match.group("mime").lower()
+    name = f"{hashlib.sha256(data).hexdigest()}.{PROJECT_IMAGE_TYPES[mime]}"
+    storage.put(f"projects/{project_id}/assets/{name}", data, mime)
+    return f"{base_url}/api/projects/{project_id}/assets/{name}"
+
+
 def slugify(value: str) -> str:
     slug = SLUG_RE.sub("-", value.lower()).strip("-")[:100].rstrip("-")
     return slug or "project"
@@ -266,6 +306,7 @@ def create_app(
     database_url: str | None = None,
     storage=None,
     public_url: str | None = None,
+    anonymous_projects: bool | None = None,
 ) -> FastAPI:
     database_url = database_url or os.getenv(
         "GEOLIBRE_DATABASE_URL", "sqlite:///./geolibre-server-api.db"
@@ -286,6 +327,23 @@ def create_app(
     object_storage = storage or make_storage()
     base_url = (public_url or os.getenv("GEOLIBRE_PUBLIC_URL", "http://localhost:8000")).rstrip("/")
     viewer_url = os.getenv("GEOLIBRE_VIEWER_URL", "https://app.geolibre.org/").rstrip("/") + "/"
+    anonymous_projects = (
+        os.getenv("GEOLIBRE_ANONYMOUS_PROJECTS", "").strip().lower() in {"1", "true", "yes"}
+        if anonymous_projects is None
+        else anonymous_projects
+    )
+    if anonymous_projects:
+        with sessions() as session:
+            if session.get(Account, ANONYMOUS_ACCOUNT_ID) is None:
+                session.add(
+                    Account(
+                        id=ANONYMOUS_ACCOUNT_ID,
+                        username=ANONYMOUS_USERNAME,
+                        password_hash="!",
+                        created_at=now(),
+                    )
+                )
+                session.commit()
     max_project_bytes = int(os.getenv("GEOLIBRE_MAX_PROJECT_BYTES", str(50 * 1024 * 1024)))
     max_thumbnail_bytes = int(os.getenv("GEOLIBRE_MAX_THUMBNAIL_BYTES", str(5 * 1024 * 1024)))
 
@@ -337,7 +395,11 @@ def create_app(
 
     @app.get("/health")
     def health():
-        return {"ok": True, "service": "geolibre-server"}
+        return {
+            "ok": True,
+            "service": "geolibre-server",
+            "anonymousProjects": anonymous_projects,
+        }
 
     @app.exception_handler(HTTPException)
     async def http_error(_request: Request, exc: HTTPException):
@@ -366,7 +428,7 @@ def create_app(
         session: Session = Depends(db),
     ) -> Account | None:
         if not authorization:
-            return None
+            return session.get(Account, ANONYMOUS_ACCOUNT_ID) if anonymous_projects else None
         if not authorization.startswith("Bearer "):
             raise HTTPException(401, "invalid authorization")
         row = session.get(Token, token_digest(authorization[7:]))
@@ -454,13 +516,14 @@ def create_app(
         document = parse_content(content, max_project_bytes)
         title = title_from(document, filename)
         timestamp = now()
+        project_id = str(uuid.uuid4())
         # unique_slug SELECTs and this INSERTs, so two concurrent creates with
         # the same title from one account can pick the same slug and the loser
         # hits uq_project_owner_slug. Retry the allocation instead of surfacing
         # that as a 500, matching how version numbers are allocated below.
         for _ in range(5):
             project = Project(
-                id=str(uuid.uuid4()),
+                id=project_id,
                 owner_id=account.id,
                 slug=unique_slug(session, account.id, title or filename),
                 title=title,
@@ -484,8 +547,15 @@ def create_app(
                     raise HTTPException(401, "authentication required") from None
         else:
             raise HTTPException(409, "could not allocate a project slug; retry")
+        document = externalize_project_images(document, project.id, object_storage, base_url)
+        content = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
         key = f"projects/{project.id}/versions/1.json"
         object_storage.put(key, content.encode(), "application/json")
+        object_storage.put(
+            f"projects/{project.id}/project.geolibre.json",
+            content.encode(),
+            "application/json",
+        )
         session.add(Version(project_id=project.id, number=1, object_key=key, created_at=timestamp))
         if commit:
             session.commit()
@@ -540,7 +610,8 @@ def create_app(
         _account: Account = Depends(required_account),
         session: Session = Depends(db),
     ):
-        assert authorization is not None
+        if authorization is None:
+            raise HTTPException(401, "authentication required")
         session.execute(delete(Token).where(Token.digest == token_digest(authorization[7:])))
         session.commit()
 
@@ -678,7 +749,7 @@ def create_app(
         session: Session = Depends(db),
     ):
         project = owned(session.get(Project, project_id), account)
-        parse_content(body.content, max_project_bytes)
+        document = parse_content(body.content, max_project_bytes)
         # Allocated from max(number) and committed *before* the object is
         # written. Deriving it from len(project.versions) let two concurrent
         # updates pick the same number: both wrote the same storage key, the
@@ -705,7 +776,14 @@ def create_app(
                 project = owned(session.get(Project, project_id), account)
         else:
             raise HTTPException(409, "could not allocate a version number; retry")
-        object_storage.put(key, body.content.encode(), "application/json")
+        document = externalize_project_images(document, project.id, object_storage, base_url)
+        content = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
+        object_storage.put(key, content.encode(), "application/json")
+        object_storage.put(
+            f"projects/{project.id}/project.geolibre.json",
+            content.encode(),
+            "application/json",
+        )
         project.updated_at = now()
         session.commit()
         session.refresh(project)
@@ -836,6 +914,29 @@ def create_app(
         project.thumbnail_type = None
         project.updated_at = now()
         session.commit()
+
+    @app.get("/api/projects/{project_id}/assets/{name}")
+    def get_project_asset(
+        project_id: str,
+        name: str,
+        account: Account | None = Depends(optional_account),
+        session: Session = Depends(db),
+    ):
+        project = visible(session.get(Project, project_id), account)
+        if not ASSET_NAME_RE.fullmatch(name):
+            raise HTTPException(404, "project asset not found")
+        try:
+            data = object_storage.get(f"projects/{project.id}/assets/{name}")
+        except KeyError:
+            raise HTTPException(404, "project asset not found")
+        extension = name.rsplit(".", 1)[-1]
+        mime = "image/jpeg" if extension == "jpg" else f"image/{extension}"
+        cache = (
+            "private, no-store"
+            if project.visibility == "private"
+            else "public, max-age=31536000, immutable"
+        )
+        return Response(data, media_type=mime, headers={"Cache-Control": cache})
 
     @app.get("/{username}/{slug}.geolibre.json")
     def latest_raw(

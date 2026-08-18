@@ -428,7 +428,7 @@ export const DEFAULT_BUILT_IN_CONTROL_VISIBILITY: Record<BuiltInMapControl, bool
   navigation: false,
   fullscreen: true,
   compass: true,
-  geolocate: false,
+  geolocate: true,
   globe: true,
   terrain: false,
   scale: true,
@@ -2527,8 +2527,12 @@ export class MapController {
     const control = geolocateControlFactory.create({
       positionOptions: {
         enableHighAccuracy: true,
+        maximumAge: 0,
       },
-      trackUserLocation: true,
+      fitBoundsOptions: { maxZoom: 17, duration: 500 },
+      // Keep this one-shot: every tap requests a fresh fix and immediately
+      // recenters, without MapLibre's active/passive/off tracking state cycle.
+      trackUserLocation: false,
     });
     // MapLibre permanently disables the GeolocateControl button on a
     // PERMISSION_DENIED error (code 1). Browsers report code 1 both for a real

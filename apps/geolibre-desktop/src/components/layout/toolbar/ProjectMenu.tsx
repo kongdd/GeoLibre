@@ -1,6 +1,11 @@
-import { projectPathLabel, useAppStore } from "@geolibre/core";
+import { PROJECT_VERSION, projectPathLabel, useAppStore } from "@geolibre/core";
 import {
   Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -25,6 +30,7 @@ import {
   HardDriveDownload,
   History,
   Import,
+  Info,
   LayoutGrid,
   Link2,
   Printer,
@@ -33,6 +39,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDesktopSettingsStore } from "../../../hooks/useDesktopSettings";
 import { isMenuItemVisible } from "../../../lib/ui-profile";
@@ -42,6 +49,53 @@ import { formatRecentProjectTime, type ToolbarChrome } from "./constants";
 // aria-describedby targets for the "sharing server unavailable" explanation.
 const SHARE_UNAVAILABLE_ID = "project-menu-share-unavailable";
 const GALLERY_UNAVAILABLE_ID = "project-menu-gallery-unavailable";
+
+function ProjectPropertiesDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const projectName = useAppStore((s) => s.projectName);
+  const projectPath = useAppStore((s) => s.projectPath);
+  const isDirty = useAppStore((s) => s.isDirty);
+  const layerCount = useAppStore((s) => s.layers.length);
+  const groupCount = useAppStore((s) => s.layerGroups.length);
+  const status = projectPath
+    ? t(isDirty ? "projectProperties.modified" : "projectProperties.saved")
+    : t("projectProperties.notSaved");
+  const rows = [
+    [t("projectProperties.name"), projectName],
+    [t("projectProperties.path"), projectPath ?? t("projectProperties.unsavedPath")],
+    [t("projectProperties.formatVersion"), PROJECT_VERSION],
+    [t("projectProperties.status"), status],
+    [t("projectProperties.layers"), String(layerCount)],
+    [t("projectProperties.groups"), String(groupCount)],
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg" closeLabel={t("common.close")}>
+        <DialogHeader>
+          <DialogTitle>{t("projectProperties.title")}</DialogTitle>
+          <DialogDescription>{t("projectProperties.description")}</DialogDescription>
+        </DialogHeader>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
+          {rows.map(([label, value]) => (
+            <div key={label} className="contents">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="min-w-0 break-all font-medium" title={value}>
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 interface ProjectMenuProps {
   chrome: ToolbarChrome;
@@ -96,6 +150,7 @@ export function ProjectMenu({
   onOpenOfflineBasemap,
 }: ProjectMenuProps) {
   const { t } = useTranslation();
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
   const projectPath = useAppStore((s) => s.projectPath);
   const recentProjects = useAppStore((s) => s.recentProjects);
   const forgetRecentProject = useAppStore((s) => s.forgetRecentProject);
@@ -251,6 +306,12 @@ export function ProjectMenu({
             {t("toolbar.item.projectHistoryEllipsis")}
           </DropdownMenuItem>
         )}
+        {show("project.properties") && (
+          <DropdownMenuItem onSelect={() => setPropertiesOpen(true)}>
+            <Info className="me-2 h-3.5 w-3.5" />
+            {t("toolbar.item.projectPropertiesEllipsis")}
+          </DropdownMenuItem>
+        )}
         {show("project.import") && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
@@ -342,6 +403,7 @@ export function ProjectMenu({
           </>
         )}
       </DropdownMenuContent>
+      <ProjectPropertiesDialog open={propertiesOpen} onOpenChange={setPropertiesOpen} />
     </DropdownMenu>
   );
 }
