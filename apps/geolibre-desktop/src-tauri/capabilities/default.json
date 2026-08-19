@@ -22,6 +22,7 @@
     "geolocation:allow-clear-watch",
     "field-media:allow-capture-photo",
     "field-media:allow-pick-photos",
+    "field-media:allow-open-photo",
     "field-media:allow-read-photo",
     {
       "comment": "Cleanup of the temporary GeoJSON the sidecar writes when a File Geodatabase layer is added (GdbSource); scoped to exactly that filename pattern so nothing else becomes deletable.",

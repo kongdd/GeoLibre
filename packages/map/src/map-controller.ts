@@ -84,6 +84,26 @@ const DEFAULT_PROJECTION: maplibregl.ProjectionSpecification = {
   type: "globe",
 };
 const DEFAULT_MAX_PITCH = 85;
+
+export function proxyMapRequestUrl(
+  url: string,
+  env: Record<string, string | undefined> = getRuntimeEnvironment(),
+): string {
+  const openFreeMapProxy = env.VITE_OPENFREEMAP_PROXY?.replace(/\/$/, "");
+  if (openFreeMapProxy && url.startsWith("https://tiles.openfreemap.org/")) {
+    return `${openFreeMapProxy}${url.slice("https://tiles.openfreemap.org".length)}`;
+  }
+
+  const googleProxy = env.VITE_GOOGLE_MAP_TILES_PROXY?.replace(/\/$/, "");
+  if (googleProxy && url.startsWith("https://mt1.google.com/")) {
+    return `${googleProxy}/public${url.slice("https://mt1.google.com".length)}`;
+  }
+  if (googleProxy && url.startsWith("https://tile.googleapis.com/")) {
+    return `${googleProxy}/api${url.slice("https://tile.googleapis.com".length)}`;
+  }
+  return url;
+}
+
 /** Edge margin, in CSS pixels, kept free when fitting the camera to an extent. */
 const FIT_BOUNDS_PADDING = 40;
 const BLANK_BACKGROUND_LAYER_ID = "geolibre-blank-background";
@@ -550,15 +570,16 @@ export class MapController {
     // Start blank and apply it below, as soon as the listeners are wired — the
     // path a project saved with a Mapbox basemap and a split-view pane both take.
     const deferMapboxStyle = isMapboxStyleUrl(this.basemapStyleUrl);
-    const openFreeMapProxy = getRuntimeEnvironment().VITE_OPENFREEMAP_PROXY?.replace(/\/$/, "");
     this.map = new maplibregl.Map({
       container,
       style: deferMapboxStyle ? createBlankMapStyle() : resolveMapStyle(this.basemapStyleUrl),
       transformRequest: (url) => ({
-        url:
-          openFreeMapProxy && url.startsWith("https://tiles.openfreemap.org/")
-            ? `${openFreeMapProxy}${url.slice("https://tiles.openfreemap.org".length)}`
-            : url,
+        url: proxyMapRequestUrl(url),
+        // A previously truncated proxied style must not strand the map behind
+        // the WebView's HTTP cache after the server has recovered.
+        ...(url.startsWith("https://tiles.openfreemap.org/styles/")
+          ? { cache: "no-store" as const }
+          : {}),
       }),
       center: view?.center ?? [-100, 40],
       zoom: view?.zoom ?? 2,
@@ -1874,10 +1895,9 @@ export class MapController {
       source: highlightSourceId(),
       filter: ["match", ["geometry-type"], ["Point", "MultiPoint"], true, false],
       paint: {
-        "circle-color": "#facc15",
-        "circle-radius": 9,
-        "circle-opacity": 0.95,
-        "circle-stroke-color": "#111827",
+        "circle-color": "rgba(0, 0, 0, 0)",
+        "circle-radius": 24,
+        "circle-stroke-color": "#f59e0b",
         "circle-stroke-width": 3,
       },
     });

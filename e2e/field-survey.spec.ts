@@ -40,6 +40,50 @@ async function addImage(
   });
 }
 
+test("preserves marker shapes and selects field icons", async ({ page }) => {
+  await openFieldCollection(page);
+  await page.getByRole("button", { name: "Create layer" }).click();
+
+  const shape = page.locator("#fc-marker-shape");
+  expect(
+    await shape
+      .locator("option")
+      .evaluateAll((options) =>
+        options.map((option) => (option as HTMLOptionElement).value)
+      )
+  ).toEqual([
+    "circle",
+    "square",
+    "triangle",
+    "diamond",
+    "star",
+    "cross",
+    "pin",
+    "custom",
+  ]);
+
+  const icons = page.getByRole("group", { name: "Field icon" });
+  for (const name of [
+    "Reservoir",
+    "Hydrological station",
+    "Water-level station",
+    "Rain gauge",
+    "House",
+    "Bridge",
+  ]) {
+    const button = icons.getByRole("button", { name });
+    await expect(button.locator("img")).toHaveAttribute(
+      "src",
+      /^data:image\/svg\+xml/
+    );
+  }
+
+  const reservoir = icons.getByRole("button", { name: "Reservoir" });
+  await reservoir.click();
+  await expect(reservoir).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#fc-marker-shape")).toHaveValue("custom");
+});
+
 test("edits notes and photos on a saved field observation", async ({
   page,
 }) => {

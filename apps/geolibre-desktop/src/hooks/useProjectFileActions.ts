@@ -26,6 +26,7 @@ import {
   isHttpUrl,
   isTauri,
   loadDroppedRasterPaths,
+  listRemoteProjectFiles,
   openArcgisProjectFile,
   openProjectFile,
   openQgisProjectFile,
@@ -35,6 +36,7 @@ import {
   saveProjectFileToPath,
   saveRemoteProjectFile,
   saveStartupProjectSnapshot,
+  type RemoteSaveProgress,
   saveTextFileWithFallback,
 } from "../lib/tauri-io";
 import { useDesktopSettingsStore } from "./useDesktopSettings";
@@ -134,6 +136,10 @@ export interface EmbedVectorDataPrompt {
  * Export as Interactive HTML; the dialog copy is carried on the prompt so the
  * same component serves both.
  */
+export type RemoteSaveResult =
+  | ({ status: "success" } & RemoteSaveProgress)
+  | { status: "error"; error: string };
+
 export interface SaveNamePrompt {
   /** Project generation that opened the prompt. */
   projectGeneration: number;
@@ -266,6 +272,8 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   const projectGeneration = useAppStore((s) => s.projectGeneration);
 
   const [actionError, setActionError] = useState<string | null>(null);
+  const [remoteSaveProgress, setRemoteSaveProgress] = useState<RemoteSaveProgress | null>(null);
+  const [remoteSaveResult, setRemoteSaveResult] = useState<RemoteSaveResult | null>(null);
   const [qgisImportWarnings, setQgisImportWarnings] = useState<QgisProjectImportWarning[] | null>(
     null,
   );
@@ -276,6 +284,11 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   const [projectUrl, setProjectUrl] = useState("");
   const [projectUrlError, setProjectUrlError] = useState<string | null>(null);
   const [projectUrlLoading, setProjectUrlLoading] = useState(false);
+  const [remoteProjectDialogOpen, setRemoteProjectDialogOpen] = useState(false);
+  const [remoteProjects, setRemoteProjects] = useState<string[]>([]);
+  const [remoteProjectsLoading, setRemoteProjectsLoading] = useState(false);
+  const [remoteProjectError, setRemoteProjectError] = useState<string | null>(null);
+  const [remoteProjectOpening, setRemoteProjectOpening] = useState<string | null>(null);
   const [credentialStripPrompt, setCredentialStripPrompt] = useState<CredentialStripPrompt | null>(
     null,
   );
@@ -579,6 +592,22 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     }
   };
 
+  const openRemoteProjects = async () => {
+    setRemoteProjectDialogOpen(true);
+    setRemoteProjectsLoading(true);
+    setRemoteProjectError(null);
+    try {
+      setRemoteProjects(await listRemoteProjectFiles());
+    } catch (error) {
+      setRemoteProjects([]);
+      setRemoteProjectError(
+        error instanceof Error ? error.message : t("toolbar.error.couldNotOpenProject"),
+      );
+    } finally {
+      setRemoteProjectsLoading(false);
+    }
+  };
+
   const handleOpenFromUrl = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedUrl = normalizeProjectUrl(projectUrl);
@@ -730,6 +759,18 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     }
   };
 
+  const handleOpenRemoteProject = async (path: string) => {
+    setRemoteProjectOpening(path);
+    setRemoteProjectError(null);
+    const error = await handleOpenRecent(path);
+    setRemoteProjectOpening(null);
+    if (error) {
+      setRemoteProjectError(error);
+    } else {
+      setRemoteProjectDialogOpen(false);
+    }
+  };
+
   // Build the current project from live store + map state and serialize it.
   // Shared by Save/Save As and the Share action so they all capture identical
   // project content (including the current map view and plugin state).
@@ -824,6 +865,31 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     }
   };
 
+  const saveRemoteWithFeedback = async (content: string, path: string): Promise<string | null> => {
+    let latest: RemoteSaveProgress = {
+      completedFiles: 0,
+      totalFiles: 0,
+      uploadedBytes: 0,
+      totalBytes: 0,
+    };
+    setRemoteSaveResult(null);
+    setRemoteSaveProgress(latest);
+    try {
+      const saved = await saveRemoteProjectFile(content, path, (progress) => {
+        latest = progress;
+        setRemoteSaveProgress(progress);
+      });
+      setRemoteSaveProgress(null);
+      if (saved) setRemoteSaveResult({ status: "success", ...latest });
+      return saved;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("toolbar.error.couldNotSaveProject");
+      setRemoteSaveProgress(null);
+      setRemoteSaveResult({ status: "error", error: message });
+      throw error;
+    }
+  };
+
   // Field-survey writes are queued so a slower older save can never overwrite
   // a newer capture. Remote projects also persist from the browser via the
   // sidecar; local browser projects keep their existing explicit-save behavior.
@@ -870,7 +936,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
         const existingLocalPath =
           !remotePath && projectPath && !isHttpUrl(projectPath) ? projectPath : null;
         const path = remotePath
-          ? await saveRemoteProjectFile(content, remotePath)
+          ? await saveRemoteWithFeedback(content, remotePath)
           : existingLocalPath
             ? await saveProjectFileToPath(content, existingLocalPath)
             : await saveProjectFile(content, ensureProjectFileName(project.name));
@@ -1201,7 +1267,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     let path: string | null;
     try {
       path = remotePath
-        ? await saveRemoteProjectFile(contentToSave, remotePath)
+        ? await saveRemoteWithFeedback(contentToSave, remotePath)
         : !options?.saveAs && existingLocalPath
           ? await saveProjectFileToPath(contentToSave, existingLocalPath, saveName)
           : await saveProjectFile(
@@ -1361,6 +1427,9 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   return {
     actionError,
     setActionError,
+    remoteSaveProgress,
+    remoteSaveResult,
+    dismissRemoteSaveResult: () => setRemoteSaveResult(null),
     qgisImportWarnings,
     setQgisImportWarnings,
     arcgisImportWarnings,
@@ -1373,6 +1442,14 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     projectUrlError,
     setProjectUrlError,
     projectUrlLoading,
+    remoteProjectDialogOpen,
+    setRemoteProjectDialogOpen,
+    remoteProjects,
+    remoteProjectsLoading,
+    remoteProjectError,
+    remoteProjectOpening,
+    openRemoteProjects,
+    handleOpenRemoteProject,
     saveTemplateDialogOpen,
     setSaveTemplateDialogOpen,
     handleDuplicate,

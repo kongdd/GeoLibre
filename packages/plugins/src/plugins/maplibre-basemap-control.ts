@@ -313,9 +313,8 @@ export const maplibreBasemapControlPlugin: GeoLibrePlugin = {
     // Seed the fresh control instance with every basemap already on the map —
     // the active style basemap plus any stacked rasters we just relinked — so
     // the reopened panel highlights them as active and a re-click on a stacked
-    // raster removes it. Without the raster ids the new instance only knows the
-    // style basemap and shows restored overlays as inactive. When rasters are
-    // stacked the map is in overlay mode, so restore that too.
+    // raster removes it. Multiple mode is the default, allowing raster basemaps
+    // to be stacked instead of silently replacing one another.
     const activeStyleId = getBasemapIdForStyleUrl(app.getActiveBasemap());
     const stackedRasterIds = [...registeredRasterLayers.keys()];
     const activeBasemapIds = [
@@ -326,7 +325,7 @@ export const maplibreBasemapControlPlugin: GeoLibrePlugin = {
     basemapControl.setState({
       activeBasemapId: activeStyleId,
       activeBasemapIds,
-      ...(stackedRasterIds.length > 0 ? { allowMultiple: true } : {}),
+      allowMultiple: true,
     });
     setTimeout(() => basemapControl?.expand(), 0);
   },
@@ -368,6 +367,7 @@ function getBasemapControlOptions(app: GeoLibreAppAPI): BasemapControlOptions {
     collapsed: false,
     position: basemapControlPosition,
     title: "Basemaps",
+    allowMultiple: true,
     // Provider basemaps that need a key (the Google/TomTom/HERE traffic overlays
     // and the Amazon Location styles) authenticate with the user's own
     // credentials, read from runtime env. Unset keys are harmless: the basemap

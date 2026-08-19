@@ -55,6 +55,11 @@ describe("maplibreBasemapControlPlugin lifecycle", () => {
     assert.equal(plugin.id, BASEMAP_CONTROL_PLUGIN_ID);
   });
 
+  it("allows multiple raster basemaps by default", () => {
+    plugin.activate(fakeApp([]));
+    assert.equal(getActiveBasemapControl()?.getState().allowMultiple, true);
+  });
+
   it("keeps stacked raster basemaps in the store when deactivated", () => {
     useAppStore.getState().addLayer(stackedRasterBasemap("google-satellite"));
     const unregistered: string[] = [];

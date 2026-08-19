@@ -16,6 +16,7 @@ import {
   getAttributeFormField,
   isAttributeFormFieldVisible,
   resolvePhotoSource,
+  resolveSvgSource,
   stampFeatureEditorTracking,
   useAppStore,
   validateAttributeFormValues,
@@ -98,6 +99,7 @@ import {
 import {
   captureNativePhoto,
   nativeFieldMediaAvailable,
+  openNativePhoto,
   pickNativePhotos,
   type NativePhoto,
 } from "../../lib/field-media";
@@ -139,6 +141,38 @@ const FIELD_MARKER_SHAPES = [
   "star",
   "cross",
   "pin",
+] as const;
+const FIELD_MARKER_ICONS = [
+  {
+    id: "reservoir",
+    labelKey: "fieldCollection.markerIcons.reservoir",
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="param(fill)" stroke="white" stroke-width="3"/><g fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 24h30M10 33h24M10 42h18"/><path d="M43 16v32H26z"/></g></svg>`,
+  },
+  {
+    id: "hydrologicalStation",
+    labelKey: "fieldCollection.markerIcons.hydrologicalStation",
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="param(fill)" stroke="white" stroke-width="3"/><g fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 24l14-10 14 10v19H18zM32 14V8M28 8h8M26 43V31h12v12M10 49c4-4 8 4 12 0s8 4 12 0 8 4 12 0 8 4 12 0"/></g></svg>`,
+  },
+  {
+    id: "waterLevelStation",
+    labelKey: "fieldCollection.markerIcons.waterLevelStation",
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="param(fill)" stroke="white" stroke-width="3"/><g fill="none" stroke="white" stroke-width="4" stroke-linecap="round"><path d="M22 12v38M22 18h9M22 26h6M22 34h9"/><path d="M12 42c5-5 10 5 15 0s10 5 15 0 10 5 15 0M12 50c5-5 10 5 15 0s10 5 15 0 10 5 15 0"/></g></svg>`,
+  },
+  {
+    id: "rainGaugeStation",
+    labelKey: "fieldCollection.markerIcons.rainGaugeStation",
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="param(fill)" stroke="white" stroke-width="3"/><g fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 15h30l-8 12v23H25V27zM25 34h8M25 42h8"/><path d="M22 8l-2 3M32 7v4M42 8l2 3"/></g></svg>`,
+  },
+  {
+    id: "house",
+    labelKey: "fieldCollection.markerIcons.house",
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="param(fill)" stroke="white" stroke-width="3"/><g fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 30L32 13l20 17M18 27v23h28V27M27 50V36h10v14"/></g></svg>`,
+  },
+  {
+    id: "bridge",
+    labelKey: "fieldCollection.markerIcons.bridge",
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="param(fill)" stroke="white" stroke-width="3"/><g fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 25h44M14 19v12M50 19v12M14 46V31h36v15M14 46c5-16 13-16 18 0 5-16 13-16 18 0M10 50h44"/></g></svg>`,
+  },
 ] as const;
 const HISTORY_POINT_STYLE = {
   markerEnabled: true,
@@ -274,12 +308,18 @@ export function FieldCollectionDialog({
 
   // Upgrade existing point collections once without overwriting later edits.
   useEffect(() => {
-    if (!open) return;
     for (const layer of collectionLayers) {
       if (getGeometryType(layer) !== "point") continue;
       const addMarker = layer.metadata?.[HISTORY_POINT_MARKER_KEY] !== true;
       const addLabels = layer.metadata?.[OBSERVATION_LABELS_KEY] !== true;
-      if (!addMarker && !addLabels) continue;
+      const labels = layer.style.labels;
+      const tightenLabels =
+        !addLabels &&
+        labels.enabled &&
+        labels.field === OBSERVATION_NAME_PROPERTY &&
+        labels.anchor === "bottom" &&
+        [-3.25, -2, -1.6].includes(labels.offsetY);
+      if (!addMarker && !addLabels && !tightenLabels) continue;
       updateLayer(layer.id, {
         metadata: {
           ...(layer.metadata ?? {}),
@@ -290,12 +330,14 @@ export function FieldCollectionDialog({
           ...layer.style,
           ...(addMarker ? HISTORY_POINT_STYLE : {}),
           ...(addLabels
-            ? { labels: observationLabelStyle(layer.style.labels) }
-            : {}),
+            ? { labels: observationLabelStyle(labels) }
+            : tightenLabels
+              ? { labels: { ...labels, offsetY: observationLabelStyle(labels).offsetY } }
+              : {}),
         },
       });
     }
-  }, [collectionLayers, open, updateLayer]);
+  }, [collectionLayers, updateLayer]);
 
   // Target layer: "" means "create a new layer" (the setup step is shown).
   const [layerId, setLayerId] = useState<string>("");
@@ -1278,7 +1320,11 @@ export function FieldCollectionDialog({
   ]);
 
   const handlePointStyle = useCallback(
-    (patch: Partial<Pick<GeoLibreLayer["style"], "markerShape" | "markerColor">>) => {
+    (
+      patch: Partial<
+        Pick<GeoLibreLayer["style"], "markerShape" | "markerColor" | "markerSvg">
+      >
+    ) => {
       if (!activeLayer) return;
       updateLayer(activeLayer.id, { style: { ...activeLayer.style, ...patch } });
       void persistProject().then((saved) => {
@@ -1603,8 +1649,9 @@ export function FieldCollectionDialog({
                       value={activeLayer.style.markerShape}
                       onChange={(event) =>
                         handlePointStyle({
-                          markerShape: event.target
-                            .value as (typeof FIELD_MARKER_SHAPES)[number],
+                          markerShape: event.target.value as
+                            | (typeof FIELD_MARKER_SHAPES)[number]
+                            | "custom",
                         })
                       }
                     >
@@ -1613,6 +1660,9 @@ export function FieldCollectionDialog({
                           {t(`style.symbology.markerShapes.${shape}`)}
                         </option>
                       ))}
+                      <option value="custom">
+                        {t("fieldCollection.markerIcons.selected")}
+                      </option>
                     </Select>
                   </div>
                   <div className="space-y-1.5">
@@ -1628,6 +1678,51 @@ export function FieldCollectionDialog({
                         handlePointStyle({ markerColor: event.target.value })
                       }
                     />
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <Label>{t("fieldCollection.markerIcons.label")}</Label>
+                    <div
+                      role="group"
+                      aria-label={t("fieldCollection.markerIcons.label")}
+                      className="grid grid-cols-3 gap-2"
+                    >
+                      {FIELD_MARKER_ICONS.map((icon) => {
+                        const selected =
+                          activeLayer.style.markerShape === "custom" &&
+                          activeLayer.style.markerSvg === icon.svg;
+                        return (
+                          <button
+                            key={icon.id}
+                            type="button"
+                            aria-pressed={selected}
+                            className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-md border p-2 text-xs transition-colors hover:bg-accent ${
+                              selected ? "border-primary bg-primary/10" : ""
+                            }`}
+                            onClick={() =>
+                              handlePointStyle({
+                                markerShape: "custom",
+                                markerSvg: icon.svg,
+                              })
+                            }
+                          >
+                            <img
+                              src={
+                                resolveSvgSource(
+                                  icon.svg.replaceAll(
+                                    "param(fill)",
+                                    activeLayer.style.markerColor
+                                  )
+                                ) ?? undefined
+                              }
+                              alt=""
+                              aria-hidden="true"
+                              className="h-8 w-8"
+                            />
+                            <span>{t(icon.labelKey)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               )}
@@ -2186,14 +2281,8 @@ function CaptureStep({
   // explicit on mobile instead of relying on browser-specific chooser wording.
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
-  const locationSectionRef = useRef<HTMLElement>(null);
-  const formSectionRef = useRef<HTMLElement>(null);
-  const attachmentsSectionRef = useRef<HTMLElement>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [resolvedPhotos, setResolvedPhotos] = useState<string[]>([]);
-  const [activeWorkflowStep, setActiveWorkflowStep] = useState<
-    "location" | "form" | "attachments"
-  >("location");
   useEffect(() => {
     let current = true;
     void Promise.all(photos.map(resolvePhotoSource)).then((sources) => {
@@ -2204,6 +2293,18 @@ function CaptureStep({
     };
   }, [photos]);
 
+  const handleOpenPhoto = (index: number) => {
+    const photo = photos[index];
+    if (!nativeFieldMediaAvailable() || !photo.startsWith("content://")) {
+      setPreviewIndex(index);
+      return;
+    }
+    void openNativePhoto(photo).catch((error) => {
+      console.error("Could not open Field Survey photo", error);
+      setPreviewIndex(index);
+    });
+  };
+
   useEffect(() => {
     const input = cameraInputRef.current;
     if (!input) return;
@@ -2212,47 +2313,12 @@ function CaptureStep({
   }, [onCameraCancel, pending]);
 
   useEffect(() => {
-    setActiveWorkflowStep(pending ? "form" : "location");
-  }, [pending]);
-
-  useEffect(() => {
     if (!editing) return;
     const target = document.querySelector<HTMLElement>(
       "[data-field-collection-form] input:not([type='hidden']), [data-field-collection-form] select, [data-field-collection-form] textarea, [data-field-collection-attachments] textarea"
     );
     target?.focus();
   }, [editing]);
-
-  useEffect(() => {
-    const target = attachmentsSectionRef.current;
-    if (!pending || !target || typeof IntersectionObserver === "undefined")
-      return;
-    const root = target.closest("[data-radix-scroll-area-viewport]");
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setActiveWorkflowStep(
-          entry.isIntersecting && entry.intersectionRatio >= 0.2
-            ? "attachments"
-            : "form"
-        );
-      },
-      { root, threshold: [0, 0.2] }
-    );
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [pending]);
-
-  const goToWorkflowStep = (step: "location" | "form" | "attachments") => {
-    const target =
-      step === "location"
-        ? locationSectionRef.current
-        : step === "form"
-        ? formSectionRef.current
-        : attachmentsSectionRef.current;
-    if (!target) return;
-    setActiveWorkflowStep(step);
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
 
   // Candidate properties for visibility expressions, computed once per render
   // instead of per field (visibility updates live as the user types).
@@ -2271,45 +2337,8 @@ function CaptureStep({
 
   return (
     <div className="space-y-4">
-      <ol
-        className="sticky top-0 z-10 grid grid-cols-3 gap-2 bg-background py-1"
-        aria-label={t("fieldCollection.workflow")}
-      >
-        {(["location", "form", "attachments"] as const).map((step, index) => {
-          const complete = Boolean(pending) && index === 0;
-          const current = activeWorkflowStep === step;
-          const locked = !pending && index > 0;
-          return (
-            <li
-              key={step}
-              aria-current={current ? "step" : undefined}
-              className={`rounded-md border text-center text-xs font-medium ${
-                complete
-                  ? "border-primary bg-primary/10 text-primary"
-                  : current
-                  ? "border-primary text-foreground"
-                  : "text-muted-foreground"
-              }`}
-            >
-              <button
-                type="button"
-                className="min-h-11 w-full rounded-md px-2 py-2 disabled:cursor-not-allowed"
-                disabled={locked}
-                onClick={() => goToWorkflowStep(step)}
-              >
-                <span className="me-1 tabular-nums">
-                  {complete ? "✓" : index + 1}.
-                </span>
-                {t(`fieldCollection.step.${step}`)}
-              </button>
-            </li>
-          );
-        })}
-      </ol>
-
       <section
-        ref={locationSectionRef}
-        className="space-y-3 scroll-mt-14"
+        className="space-y-3"
         aria-labelledby="fc-location-heading"
       >
         <h3 id="fc-location-heading" className="text-sm font-semibold">
@@ -2391,11 +2420,9 @@ function CaptureStep({
       {pending && (
         <>
           <section
-            ref={formSectionRef}
-            className="space-y-3 scroll-mt-14"
+            className="space-y-3"
             aria-labelledby="fc-form-heading"
             data-field-collection-form
-            onFocusCapture={() => setActiveWorkflowStep("form")}
           >
             <h3 id="fc-form-heading" className="text-sm font-semibold">
               {t("fieldCollection.step.form")}
@@ -2533,12 +2560,9 @@ function CaptureStep({
           </section>
 
           <section
-            ref={attachmentsSectionRef}
-            className="space-y-3 scroll-mt-14"
+            className="space-y-3"
             aria-labelledby="fc-attachments-heading"
             data-field-collection-attachments
-            onFocusCapture={() => setActiveWorkflowStep("attachments")}
-            onPointerDown={() => setActiveWorkflowStep("attachments")}
           >
             <h3 id="fc-attachments-heading" className="text-sm font-semibold">
               {t("fieldCollection.step.attachments")}
@@ -2619,7 +2643,7 @@ function CaptureStep({
                         aria-label={t("fieldCollection.openPhoto", {
                           number: index + 1,
                         })}
-                        onClick={() => setPreviewIndex(index)}
+                        onClick={() => handleOpenPhoto(index)}
                       >
                         <img
                           src={resolvedPhotos[index] || undefined}

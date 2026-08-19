@@ -56,6 +56,12 @@ impl<R: Runtime> FieldMedia<R> {
             .map_err(|error| error.to_string())
     }
 
+    fn open_photo(&self, uri: &str) -> Result<(), String> {
+        self.0
+            .run_mobile_plugin::<()>("openPhoto", ReadArgs { uri })
+            .map_err(|error| error.to_string())
+    }
+
     fn read_photo(&self, uri: &str) -> Result<String, String> {
         self.0
             .run_mobile_plugin::<ReadResponse>("readPhoto", ReadArgs { uri })
@@ -78,6 +84,11 @@ async fn pick_photos<R: Runtime>(
 }
 
 #[tauri::command]
+async fn open_photo<R: Runtime>(app: AppHandle<R>, uri: String) -> Result<(), String> {
+    app.state::<FieldMedia<R>>().open_photo(&uri)
+}
+
+#[tauri::command]
 async fn read_photo<R: Runtime>(app: AppHandle<R>, uri: String) -> Result<String, String> {
     app.state::<FieldMedia<R>>().read_photo(&uri)
 }
@@ -93,7 +104,12 @@ fn init_mobile<R: Runtime, C: serde::de::DeserializeOwned>(
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("field-media")
-        .invoke_handler(tauri::generate_handler![capture_photo, pick_photos, read_photo])
+        .invoke_handler(tauri::generate_handler![
+            capture_photo,
+            pick_photos,
+            open_photo,
+            read_photo
+        ])
         .setup(|app, api| {
             app.manage(init_mobile(app, api)?);
             Ok(())

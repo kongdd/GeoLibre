@@ -1,6 +1,6 @@
 # GeoLibre 公网入口与 Caddy 配置
 
-本机已通过 Caddy + Rathole 将 GeoLibre 暴露为 `https://ecohydro.top:5173`，项目 API 同源代理，OpenFreeMap 经本机缓存。
+本机已通过 Caddy + Rathole 将 GeoLibre 暴露为 `https://ecohydro.top:5173`，项目 API 同源代理，OpenFreeMap 与 Google Map 瓦片经本机转发。
 
 ## 当前拓扑
 
@@ -10,8 +10,10 @@
   → kong-nas（Rathole 客户端，amd=10.100.1.6）
   → Caddy 10.100.1.6:5173 / 192.168.31.86:5173
        ├ /api/*、/health → 127.0.0.1:8010
-       ├ /openfreemap/*  → tiles.openfreemap.org（Otter 缓存）
-       └ 其余           → 127.0.0.1:5173（Vite）
+       ├ /openfreemap/*               → tiles.openfreemap.org（Otter 缓存）
+       ├ /google-map-tiles/public/*    → mt1.google.com（Otter 缓存）
+       ├ /google-map-tiles/api/*       → tile.googleapis.com
+       └ 其余                          → 127.0.0.1:5173（Vite）
 ```
 
 - `8010` 不对外映射。
@@ -26,6 +28,7 @@
 | 项目 API `/health` | 200 |
 | OpenFreeMap 代理首次 | `uri-miss; stored` |
 | OpenFreeMap 代理二次 | `hit; detail=OTTER` |
+| Google Map 代理 | 200，JPEG 256×256 |
 | Caddy | `2.10.0`，含 `cache-handler` + Otter |
 | Pi Web `https://ecohydro.top/` | 401（鉴权正常） |
 
@@ -33,7 +36,7 @@
 
 1. **公网 `5173` 曾打不开**：Caddy 与 Rathole 服务端均正常；NAS 访问 `amd:443` 通、`5173–5175` 超时。根因是本机 UFW 拦截来自 `10.100.1.2` 的 5173–5175。`443` 可用是因为 Caddy 监听 `*:443`。
 2. **网页启动极慢**：公网跑的是 Vite 开发服务器，数百个 TS 模块经 Rathole 串行加载。已对 `5173` 启用 `encode zstd gzip`；要根本提速需切生产 `dist`。
-3. **OpenFreeMap 慢**：浏览器直连 `tiles.openfreemap.org`，与 Caddy/Rathole 无关。已改写为同源 `/openfreemap/*` 并缓存 24 h。
+3. **地图瓦片慢**：OpenFreeMap 与 Google Map 均改写为同源路径；Google 公共瓦片缓存 60 d。
 
 ## 关键文件
 

@@ -11,6 +11,7 @@ import {
   createMapController,
   geolocateControlFactory,
   MapController,
+  proxyMapRequestUrl,
 } from "../packages/map/src/map-controller";
 
 // Internal shape of MapController we reach into to inject a fake map. The
@@ -294,6 +295,32 @@ const heatmapId = (id: string) => `layer-${id}-heatmap`;
 const markerId = (id: string) => `layer-${id}-marker`;
 const rasterId = (id: string) => `layer-${id}-raster`;
 const srcId = (id: string) => `source-${id}`;
+
+describe("proxyMapRequestUrl", () => {
+  const env = {
+    VITE_OPENFREEMAP_PROXY: "/openfreemap/",
+    VITE_GOOGLE_MAP_TILES_PROXY: "/google-map-tiles/",
+  };
+
+  it("routes configured tile hosts through same-origin proxies", () => {
+    assert.equal(
+      proxyMapRequestUrl("https://tiles.openfreemap.org/styles/liberty", env),
+      "/openfreemap/styles/liberty",
+    );
+    assert.equal(
+      proxyMapRequestUrl("https://mt1.google.com/vt/lyrs=s&x=1&y=2&z=3", env),
+      "/google-map-tiles/public/vt/lyrs=s&x=1&y=2&z=3",
+    );
+    assert.equal(
+      proxyMapRequestUrl("https://tile.googleapis.com/v1/2dtiles/3/1/2?session=x", env),
+      "/google-map-tiles/api/v1/2dtiles/3/1/2?session=x",
+    );
+    assert.equal(
+      proxyMapRequestUrl("https://example.com/tile.png", env),
+      "https://example.com/tile.png",
+    );
+  });
+});
 
 describe("MapController.syncLayers reconciliation", () => {
   it("keeps a lower raster beneath every companion of a mixed KML point layer", () => {

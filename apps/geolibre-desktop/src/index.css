@@ -2931,6 +2931,174 @@ body,
   border-color: hsl(var(--muted-foreground));
 }
 
+/* Google Maps-style mobile picker: a dimmed bottom sheet with visual cards. */
+@media (max-width: 639px),
+  (pointer: coarse) and (max-width: 1024px),
+  (max-height: 639px) and (max-width: 1024px) {
+  .maplibregl-map:has(> .basemap-control-panel.expanded)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 999;
+    background: rgb(0 0 0 / 0.42);
+  }
+
+  .basemap-control-panel:not(.is-resized) {
+    inset: auto 0 0 0 !important;
+    box-sizing: border-box;
+    width: 100% !important;
+    height: min(68dvh, 640px);
+    max-width: none;
+    max-height: none;
+    padding: 12px max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -8px 28px rgb(0 0 0 / 0.22);
+  }
+
+  .basemap-control-header {
+    padding: 0 0 8px;
+  }
+
+  .basemap-control-title {
+    font-size: 16px;
+  }
+
+  .basemap-control-close,
+  .basemap-control-settings-toggle {
+    width: 44px;
+    height: 44px;
+  }
+
+  .basemap-control-close {
+    font-size: 32px;
+  }
+
+  .basemap-control-content {
+    flex: 1 1 auto;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .basemap-control-multiple-toggle {
+    gap: 6px;
+    padding: 0 1px;
+    font-size: 11px;
+  }
+
+  .basemap-control-filters {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .basemap-control-status {
+    min-height: 14px;
+    font-size: 11px;
+  }
+
+  .basemap-control-before-id,
+  .basemap-control-result-meta,
+  .basemap-control-result-attribution,
+  .basemap-control-result-type,
+  .basemap-control-resize-handle {
+    display: none;
+  }
+
+  .basemap-control-search-row {
+    display: block;
+  }
+
+  .basemap-control-results {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px 8px;
+    max-height: none;
+    padding: 2px 0 8px;
+  }
+
+  .basemap-control-result {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+    padding: 2px;
+    border: 0;
+    background: transparent;
+    text-align: center;
+  }
+
+  .basemap-control-result:hover,
+  .basemap-control-result.is-active,
+  .dark .basemap-control-result:hover,
+  .dark .basemap-control-result.is-active {
+    background: transparent;
+  }
+
+  .basemap-control-result::before,
+  .geolibre-basemap-thumbnail {
+    box-sizing: border-box;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 4 / 3;
+    border: 1px solid hsl(var(--border));
+    border-radius: 8px;
+  }
+
+  .basemap-control-result:not([data-geolibre-basemap-preview="ready"]):not(
+      [data-geolibre-basemap-preview="loaded"]
+    )::before {
+    content: "";
+    background: linear-gradient(
+        135deg,
+        transparent 42%,
+        hsl(var(--muted-foreground) / 0.35) 43% 48%,
+        transparent 49%
+      ),
+      linear-gradient(
+        35deg,
+        hsl(var(--muted)) 38%,
+        hsl(var(--accent)) 39% 62%,
+        hsl(var(--muted)) 63%
+      );
+  }
+
+  .geolibre-basemap-thumbnail {
+    grid-row: auto;
+    margin: 0;
+    object-fit: cover;
+  }
+
+  .basemap-control-result.is-active::before,
+  .basemap-control-result.is-active .geolibre-basemap-thumbnail {
+    border: 3px solid hsl(var(--primary));
+    outline: 2px solid hsl(var(--background));
+    outline-offset: -5px;
+  }
+
+  .basemap-control-result-main {
+    width: 100%;
+  }
+
+  .basemap-control-result-name {
+    overflow: visible;
+    color: hsl(var(--foreground));
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .basemap-control-result.is-active .basemap-control-result-name {
+    color: hsl(var(--primary));
+    font-weight: 650;
+  }
+}
+
 .geolibre-earth-engine-control .plugin-control-toggle {
   align-items: center;
   display: flex;

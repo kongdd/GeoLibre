@@ -13,9 +13,6 @@ import android.util.Base64
 import android.util.Size
 import android.webkit.WebView
 import androidx.activity.result.ActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
-import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.exifinterface.media.ExifInterface
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
@@ -79,8 +76,16 @@ class FieldMediaPlugin(private val activity: Activity) : Plugin(activity) {
         val pending = pendingCapture
         pendingCapture = null
         val response = JSObject()
-        if (pending == null || result.resultCode != Activity.RESULT_OK) {
-            pending?.let { activity.contentResolver.delete(it.uri, null, null) }
+        if (pending == null) {
+            response.put("photo", null)
+            invoke.resolve(response)
+            return
+        }
+        // Some OEM camera apps write EXTRA_OUTPUT successfully but still return
+        // RESULT_CANCELED after the user confirms. The MediaStore bytes are the
+        // reliable result; deleting solely from resultCode loses the photo.
+        if (result.resultCode != Activity.RESULT_OK && !hasPhotoData(pending.uri)) {
+            activity.contentResolver.delete(pending.uri, null, null)
             response.put("photo", null)
             invoke.resolve(response)
             return
@@ -97,15 +102,20 @@ class FieldMediaPlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun pickPhotos(invoke: Invoke) {
-        val args = invoke.parseArgs(PickPhotosArgs::class.java)
-        pickLimit = args.max.coerceIn(1, 10)
-        val request = PickVisualMediaRequest(PickVisualMedia.ImageOnly)
-        val intent = if (pickLimit > 1) {
-            PickMultipleVisualMedia(pickLimit).createIntent(activity, request)
-        } else {
-            PickVisualMedia().createIntent(activity, request)
+        try {
+            val args = invoke.parseArgs(PickPhotosArgs::class.java)
+            pickLimit = args.max.coerceIn(1, 10)
+            // ACTION_OPEN_DOCUMENT is more reliable than the backported Android
+            // Photo Picker on some OEM systems and still grants direct URI access.
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/*"
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, pickLimit > 1)
+            }
+            startActivityForResult(invoke, intent, "pickPhotosResult")
+        } catch (error: Exception) {
+            invoke.reject(error.message ?: "Could not open the system image picker")
         }
-        startActivityForResult(invoke, intent, "pickPhotosResult")
     }
 
     @ActivityCallback
@@ -150,6 +160,26 @@ class FieldMediaPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    fun openPhoto(invoke: Invoke) {
+        try {
+            val uri = Uri.parse(invoke.parseArgs(ReadPhotoArgs::class.java).uri)
+            requireOwnedPhoto(uri)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, activity.contentResolver.getType(uri) ?: "image/*")
+                clipData = ClipData.newRawUri("GeoLibre photo", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            require(intent.resolveActivity(activity.packageManager) != null) {
+                "No system photo viewer is available"
+            }
+            activity.startActivity(intent)
+            invoke.resolve()
+        } catch (error: Exception) {
+            invoke.reject(error.message ?: "Could not open photo")
+        }
+    }
+
+    @Command
     fun readPhoto(invoke: Invoke) {
         try {
             val uri = Uri.parse(invoke.parseArgs(ReadPhotoArgs::class.java).uri)
@@ -186,6 +216,12 @@ class FieldMediaPlugin(private val activity: Activity) : Plugin(activity) {
             activity.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         ) { "Could not create Pictures/GeoLibre photo" }
         return PendingPhoto(uri, name, mimeType)
+    }
+
+    private fun hasPhotoData(uri: Uri): Boolean = try {
+        activity.contentResolver.openInputStream(uri).use { input -> input?.read() != -1 }
+    } catch (_: Exception) {
+        false
     }
 
     private fun publish(uri: Uri) {

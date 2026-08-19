@@ -2,9 +2,14 @@ import {
   hasPathTraversal,
   isAbsoluteFilesystemPath,
   parseProject,
+  resolvePhotoSource,
   type GeoLibreProject,
 } from "@geolibre/core";
-import { saveProjectToRemote as saveProjectToRemoteSidecar } from "@geolibre/processing";
+import {
+  listRemoteProjects as listRemoteProjectsFromSidecar,
+  readProjectFromRemote,
+  saveProjectToRemote as saveProjectToRemoteSidecar,
+} from "@geolibre/processing";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -35,6 +40,7 @@ import {
   parseDelimitedTextLayer,
 } from "./delimited-text";
 import { isAndroidContentUri, writeInPlaceWithAndroidFallback } from "./android-content-uri";
+import { isAndroid } from "./is-mobile";
 import { startupProjectPath } from "./startup-project";
 import {
   readStartupSnapshot,
@@ -44,8 +50,8 @@ import {
   type StartupSnapshotSlot,
 } from "./startup-project-snapshot";
 import { IS_MAS_BUILD } from "./build-flags";
-import { REMOTE_PROJECT_ROOT } from "./file-names";
-import { externalizeProjectImages, hydrateProjectImages } from "./project-images";
+import { isRemoteProjectFile, isRemoteProjectPath, REMOTE_PROJECT_ROOT } from "./file-names";
+import { externalizeNativeProjectImages, hydrateProjectImages } from "./project-images";
 import type { DuckDbVectorFile } from "./duckdb-vector-loader";
 import {
   confirmLargeDataset,
@@ -251,6 +257,24 @@ export async function listDirectory(path: string): Promise<LocalDirectoryEntry[]
     path: `${base}${entry.name}`,
     isDirectory: entry.isDirectory,
   }));
+}
+
+export async function listRemoteProjectFiles(): Promise<string[]> {
+  if (!isTauri() || isAndroid()) {
+    return (await listRemoteProjectsFromSidecar())
+      .map((path) => `${REMOTE_PROJECT_ROOT}/${path}`)
+      .filter(isRemoteProjectFile)
+      .sort();
+  }
+  const directories = (await readDir(REMOTE_PROJECT_ROOT)).filter((entry) => entry.isDirectory);
+  const projects = await Promise.all(
+    directories.map(async (directory) =>
+      (await readDir(`${REMOTE_PROJECT_ROOT}/${directory.name}`))
+        .filter((entry) => !entry.isDirectory)
+        .map((entry) => `${REMOTE_PROJECT_ROOT}/${directory.name}/${entry.name}`),
+    ),
+  );
+  return projects.flat().filter(isRemoteProjectFile).sort();
 }
 
 // Built at call time so the filter-group label shown in the native file dialog
@@ -2902,6 +2926,15 @@ export async function openRecentProjectFile(
     return { project: parseProject(body), path, text: body };
   }
 
+  if ((!isTauri() || isAndroid()) && isRemoteProjectPath(path)) {
+    const relative = path.slice(REMOTE_PROJECT_ROOT.length + 1);
+    const raw = new TextDecoder("utf-8", { fatal: true }).decode(
+      await readProjectFromRemote(relative),
+    );
+    const text = await hydrateRemoteProjectText(raw, path);
+    return { project: parseProject(text), path, text };
+  }
+
   if (!isTauri()) {
     throw new Error("Recent local projects can only be reopened in GeoLibre Desktop.");
   }
@@ -2954,6 +2987,10 @@ async function hydrateRemoteProjectText(content: string, path: string): Promise<
   const dir = path.slice(0, path.lastIndexOf("/"));
   return hydrateProjectImages(content, async (relative) => {
     try {
+      if (!isTauri() || isAndroid()) {
+        const prefix = dir.slice(REMOTE_PROJECT_ROOT.length + 1);
+        return await readProjectFromRemote(`${prefix}/${relative}`);
+      }
       return await readFile(`${dir}/${relative}`);
     } catch {
       return null;
@@ -2961,24 +2998,72 @@ async function hydrateRemoteProjectText(content: string, path: string): Promise<
   });
 }
 
-export async function saveRemoteProjectFile(content: string, path: string): Promise<string | null> {
-  const packed = externalizeProjectImages(content);
+const uploadedRemoteProjectImages = new Set<string>();
+
+export interface RemoteSaveProgress {
+  completedFiles: number;
+  totalFiles: number;
+  uploadedBytes: number;
+  totalBytes: number;
+}
+
+export async function saveRemoteProjectFile(
+  content: string,
+  path: string,
+  onProgress?: (progress: RemoteSaveProgress) => void,
+): Promise<string | null> {
+  const packed = await externalizeNativeProjectImages(content, resolvePhotoSource);
   const dir = path.slice(0, path.lastIndexOf("/"));
   const prefix = dir.slice(REMOTE_PROJECT_ROOT.length + 1);
-  if (!isTauri()) {
+  const projectBytes = new Blob([packed.content]).size;
+  // Android is a Tauri host but cannot mount the server's /mnt/z filesystem.
+  if (!isTauri() || isAndroid()) {
+    const files = packed.files.filter(
+      (file) => !uploadedRemoteProjectImages.has(`${prefix}/${file.path}`),
+    );
+    const totalFiles = files.length + 1;
+    const totalBytes = projectBytes + files.reduce((sum, file) => sum + file.bytes.length, 0);
+    let completedFiles = 0;
+    let uploadedBytes = 0;
+    const report = () => onProgress?.({ completedFiles, totalFiles, uploadedBytes, totalBytes });
+    report();
+    await Promise.all(
+      files.map(async (file) => {
+        const remotePath = `${prefix}/${file.path}`;
+        await saveProjectToRemoteSidecar(file.bytes, remotePath);
+        uploadedRemoteProjectImages.add(remotePath);
+        completedFiles += 1;
+        uploadedBytes += file.bytes.length;
+        report();
+      }),
+    );
     await saveProjectToRemoteSidecar(
       packed.content,
       `${prefix}/${path.slice(path.lastIndexOf("/") + 1)}`,
     );
-    for (const file of packed.files) {
-      await saveProjectToRemoteSidecar(file.bytes, `${prefix}/${file.path}`);
-    }
+    completedFiles += 1;
+    uploadedBytes += projectBytes;
+    report();
     return path;
   }
+  const totalFiles = packed.files.length + 1;
+  const totalBytes = projectBytes + packed.files.reduce((sum, file) => sum + file.bytes.length, 0);
+  let completedFiles = 0;
+  let uploadedBytes = 0;
+  const report = () => onProgress?.({ completedFiles, totalFiles, uploadedBytes, totalBytes });
+  report();
   if (packed.files.length > 0) await mkdir(`${dir}/images`, { recursive: true });
   else await mkdir(dir, { recursive: true });
-  for (const file of packed.files) await writeFile(`${dir}/${file.path}`, file.bytes);
+  for (const file of packed.files) {
+    await writeFile(`${dir}/${file.path}`, file.bytes);
+    completedFiles += 1;
+    uploadedBytes += file.bytes.length;
+    report();
+  }
   await writeTextFile(path, packed.content);
+  completedFiles += 1;
+  uploadedBytes += projectBytes;
+  report();
   return path;
 }
 

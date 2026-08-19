@@ -13,6 +13,24 @@ function explicitSidecarUrl(): string | undefined {
   }
 }
 
+function isViteDevelopment(): boolean {
+  try {
+    return (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
+  } catch {
+    return false;
+  }
+}
+
+function explicitRemoteProjectUrl(): string | undefined {
+  try {
+    const value = (import.meta as { env?: Record<string, string | undefined> }).env
+      ?.VITE_REMOTE_PROJECT_URL;
+    return value?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Resolve the sidecar base URL for the current runtime.
  *
@@ -236,13 +254,74 @@ export async function checkSidecarHealth(
   }
 }
 
+function remoteProjectStorageUrl(
+  fileName: string | null,
+  action: "list" | "read" | "save",
+  baseUrl: string,
+): URL {
+  const location = typeof window === "undefined" ? null : window.location;
+  const viteServer =
+    !explicitSidecarUrl() &&
+    (isViteDevelopment() || location?.port === "5173") &&
+    baseUrl === DEFAULT_SIDECAR_URL &&
+    (location?.protocol === "http:" || location?.protocol === "https:");
+  const url = new URL(
+    explicitRemoteProjectUrl() ??
+      (viteServer ? `${location.origin}/__geolibre_remote_project` : `${baseUrl}/project/${action}`),
+  );
+  url.searchParams.set("action", action);
+  if (fileName) url.searchParams.set("name", fileName);
+  return url;
+}
+
+export async function listRemoteProjects(
+  baseUrl = DEFAULT_SIDECAR_URL,
+): Promise<string[]> {
+  const url = remoteProjectStorageUrl(null, "list", baseUrl);
+  let response: Response;
+  try {
+    response = await sidecarFetch(url.toString());
+  } catch (error) {
+    console.debug("Remote project storage unreachable:", error);
+    throw new Error(`Could not connect to remote project storage at ${url.origin}.`);
+  }
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response, "Remote project listing failed"));
+  }
+  const result = (await response.json()) as { projects?: unknown };
+  if (
+    !Array.isArray(result.projects) ||
+    !result.projects.every((path) => typeof path === "string")
+  ) {
+    throw new Error("Remote project listing returned invalid data.");
+  }
+  return result.projects;
+}
+
+export async function readProjectFromRemote(
+  fileName: string,
+  baseUrl = DEFAULT_SIDECAR_URL,
+): Promise<Uint8Array> {
+  const url = remoteProjectStorageUrl(fileName, "read", baseUrl);
+  let response: Response;
+  try {
+    response = await sidecarFetch(url.toString());
+  } catch (error) {
+    console.debug("Remote project storage unreachable:", error);
+    throw new Error(`Could not connect to remote project storage at ${url.origin}.`);
+  }
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response, "Remote project read failed"));
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
 export async function saveProjectToRemote(
   content: string | Uint8Array,
   fileName: string,
   baseUrl = DEFAULT_SIDECAR_URL,
 ): Promise<string> {
-  const url = new URL(`${baseUrl}/project/save`);
-  url.searchParams.set("name", fileName);
+  const url = remoteProjectStorageUrl(fileName, "save", baseUrl);
   let response: Response;
   try {
     response = await sidecarFetch(url.toString(), {
@@ -254,12 +333,11 @@ export async function saveProjectToRemote(
       body: content as BodyInit,
     });
   } catch (error) {
-    throw sidecarConnectionError(baseUrl, error);
+    console.debug("Remote project storage unreachable:", error);
+    throw new Error(`Could not connect to remote project storage at ${url.origin}.`);
   }
   if (!response.ok) {
-    throw new Error(
-      await responseErrorMessage(response, `Remote save failed: HTTP ${response.status}`),
-    );
+    throw new Error(await responseErrorMessage(response, "Remote project save failed"));
   }
   const result = (await response.json()) as { path?: unknown };
   if (typeof result.path !== "string") throw new Error("Remote save returned no path.");

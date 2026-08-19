@@ -13,6 +13,9 @@ trap 'rm -f "$aligned"' EXIT
 cd "$app"
 env -u CC -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
   GEOLIBRE_FIELD_SURVEY_ONLY=1 \
+  VITE_OPENFREEMAP_PROXY=https://ecohydro.top:5173/openfreemap \
+  VITE_GOOGLE_MAP_TILES_PROXY=https://ecohydro.top:5173/google-map-tiles \
+  VITE_REMOTE_PROJECT_URL=https://ecohydro.top:5173/__geolibre_remote_project \
   RUSTFLAGS='-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384' \
   npx tauri android build --apk --target aarch64
 

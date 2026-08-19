@@ -1206,6 +1206,17 @@ export function DesktopShell({
     return () => setNonTiledRasterHandler(null);
   }, [t]);
 
+  // Field Survey is usable without a basemap, so its entry point must not wait
+  // for MapLibre's `load` event: an unreachable remote style can leave the map
+  // blank while GPS/photo collection should still work offline.
+  useEffect(() => {
+    if (!externalPluginsReady || layoutOptions.viewer) return;
+    const pluginManager = getPluginManager();
+    if (!pluginManager.isActive(FIELD_SURVEY_PLUGIN_ID)) {
+      pluginManager.activate(FIELD_SURVEY_PLUGIN_ID, createAppAPI(mapControllerRef));
+    }
+  }, [externalPluginsReady, layoutOptions.viewer]);
+
   useEffect(() => {
     // Restoration should run only when a project is loaded (projectGeneration)
     // or the map is reinitialised (mapReadyGeneration), not on every
@@ -1281,12 +1292,8 @@ export function DesktopShell({
     // Same contract for the deck.gl overlay: re-attach it to the current map
     // and re-render any deckgl-viz layers a restored project carries.
     restoreDeckViz(appAPI, pluginManager.isActive(DECK_VIZ_PLUGIN_ID));
-    // Field Survey's toolbar menu is the entry point for collection, GPS, and
-    // basemap switch in the field workflow. The plugin does not use
-    // `activeByDefault` (that path skips `activate()` for already-active
-    // plugins, so its toolbar menu never registers), so activate it
-    // imperatively here once the map is ready. Safe to call repeatedly:
-    // `PluginManager.activate` is a no-op when the plugin is already active.
+    // Project restoration may deactivate plugins absent from the project file,
+    // so reassert the always-available Field Survey entry after restoration.
     if (!pluginManager.isActive(FIELD_SURVEY_PLUGIN_ID)) {
       pluginManager.activate(FIELD_SURVEY_PLUGIN_ID, appAPI);
     }

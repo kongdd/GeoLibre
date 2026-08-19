@@ -179,20 +179,29 @@ function loadAuthGate(
 // stale lazy chunk 404s (cooldown-guarded; if sessionStorage is blocked it
 // skips the reload and lets the preload error surface instead). That keeps
 // the user's session/map state intact and removes the self-refresh loop.
-registerSW({
-  immediate: true,
-  onNeedReload() {
-    // Intentionally a no-op: the updated SW is already in control, so let the
-    // refreshed shell load on the user's next page load rather than yanking the
-    // page out from under them. See installStaleChunkReload for the on-demand
-    // recovery path when a now-deleted lazy chunk is actually requested.
-  },
-  onRegisterError(error) {
-    // Registration can fail in production (non-secure origin, scope conflict).
-    // The app still works without the SW, so surface it rather than fail.
-    console.error("[GeoLibre] Service worker registration failed", error);
-  },
-});
+if (window.location.port === "5173") {
+  // Local preview changes on every restart; an installed production worker can
+  // otherwise keep an old bundle alive and route saves to the former endpoint.
+  void navigator.serviceWorker?.getRegistrations().then(async (registrations) => {
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+    if (typeof caches !== "undefined") {
+      await Promise.all((await caches.keys()).map((key) => caches.delete(key)));
+    }
+  });
+} else {
+  registerSW({
+    immediate: true,
+    onNeedReload() {
+      // Intentionally a no-op: the updated SW is already in control, so let the
+      // refreshed shell load on the user's next page load rather than yanking the
+      // page out from under them. See installStaleChunkReload for recovery.
+    },
+    onRegisterError(error) {
+      // The app still works without the SW, so surface failure rather than fail.
+      console.error("[GeoLibre] Service worker registration failed", error);
+    },
+  });
+}
 
 const sharedSettingsUrl = desktopSettingsUrl(window.location.search);
 const sharedSettingsReady = sharedSettingsUrl

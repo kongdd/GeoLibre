@@ -22,9 +22,12 @@ export function remoteProjectSlug(name: string): string {
 
 export function isRemoteProjectFile(path: string): boolean {
   if (!isRemoteProjectPath(path)) return false;
-  const rest = path.slice(REMOTE_PROJECT_ROOT.length + 1);
-  const slash = rest.indexOf("/");
-  return slash > 0 && slash < rest.length - 1;
+  const parts = path.slice(REMOTE_PROJECT_ROOT.length + 1).split("/");
+  return (
+    parts.length === 2 &&
+    parts.every((part) => part !== "" && part !== "." && part !== "..") &&
+    /\.(geolibre|geolibre\.json|json)$/i.test(parts[1])
+  );
 }
 
 /**

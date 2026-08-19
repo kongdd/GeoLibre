@@ -307,6 +307,18 @@
           "markdownDescription": "Denies the capture_photo command without any pre-configured scope."
         },
         {
+          "description": "Enables the open_photo command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-photo",
+          "markdownDescription": "Enables the open_photo command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_photo command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-photo",
+          "markdownDescription": "Denies the open_photo command without any pre-configured scope."
+        },
+        {
           "description": "Enables the pick_photos command without any pre-configured scope.",
           "type": "string",
           "const": "allow-pick-photos",

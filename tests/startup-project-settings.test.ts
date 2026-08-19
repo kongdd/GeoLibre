@@ -120,6 +120,21 @@ describe("planStartup", () => {
     );
   });
 
+  it("restores the browser workspace after reload, but not inside an embed", () => {
+    const options = {
+      explicitPayload: false,
+      desktop: false,
+      reloading: true,
+      settings: pinned,
+      recentProjects: [],
+    };
+    assert.deepEqual(planStartup(options), { kind: "workspace" });
+    assert.deepEqual(planStartup({ ...options, embedded: true }), {
+      kind: "default",
+      projection: "globe",
+    });
+  });
+
   it("never restores off the desktop, but still honors the projection there", () => {
     // The browser build and the Jupyter embed have no persistent local file to
     // reopen, so the same pinned preference must not gate their shell -- but the

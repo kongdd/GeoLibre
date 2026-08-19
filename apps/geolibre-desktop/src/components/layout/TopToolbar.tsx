@@ -1954,6 +1954,7 @@ export function TopToolbar({
           shareHostStatus={shareHost.status}
           onNewProject={() => setNewProjectDialogOpen(true)}
           onOpenFromFile={() => void projectFiles.handleOpenFromFile()}
+          onOpenFromRemote={() => void projectFiles.openRemoteProjects()}
           onOpenFromUrl={() => projectFiles.setProjectUrlDialogOpen(true)}
           onOpenGallery={() => setGalleryDialogOpen(true)}
           onImportQgisProject={() => void projectFiles.handleImportQgisProject()}

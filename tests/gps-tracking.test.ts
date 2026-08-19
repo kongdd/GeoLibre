@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { LineString, MultiLineString } from "geojson";
+import { raiseGpsOverlayLayers } from "../apps/geolibre-desktop/src/components/layout/GpsTrackingDialog";
 import {
   accuracyCircle,
   buildTrackGpx,
@@ -25,6 +26,32 @@ import {
   trackStats,
 } from "../apps/geolibre-desktop/src/lib/gps-tracking";
 
+describe("GPS overlay ordering", () => {
+  it("raises live GPS layers above a basemap added later without looping", () => {
+    const order = [
+      "background",
+      "__gps_accuracy__-fill",
+      "__gps_track__-line",
+      "google-satellite",
+    ];
+    let moves = 0;
+    const map = {
+      getLayer: (id: string) => (order.includes(id) ? { id } : undefined),
+      getStyle: () => ({ layers: order.map((id) => ({ id })) }),
+      moveLayer: (id: string) => {
+        order.splice(order.indexOf(id), 1);
+        order.push(id);
+        moves += 1;
+      },
+    };
+
+    raiseGpsOverlayLayers(map as never);
+    assert.deepEqual(order.slice(-2), ["__gps_accuracy__-fill", "__gps_track__-line"]);
+    raiseGpsOverlayLayers(map as never);
+    assert.equal(moves, 2);
+  });
+});
+
 function fix(overrides: Partial<GpsFix> = {}): GpsFix {
   return {
     lng: -123.09,
@@ -48,11 +75,19 @@ describe("gps-tracking settings", () => {
 
   it("keeps valid values and coerces numeric strings", () => {
     const s = normalizeGpsSettings({
+      recordDistanceM: 80,
+      recordIntervalS: "4",
       minDistanceM: 10,
-      minTimeS: "5",
+      minTimeS: "2",
       maxAccuracyM: 25,
     });
-    assert.deepEqual(s, { minDistanceM: 10, minTimeS: 5, maxAccuracyM: 25 });
+    assert.deepEqual(s, {
+      recordDistanceM: 80,
+      recordIntervalS: 4,
+      minDistanceM: 10,
+      minTimeS: 2,
+      maxAccuracyM: 25,
+    });
   });
 
   it("zeroes negatives/NaN and clamps absurd values", () => {
@@ -119,24 +154,44 @@ describe("gps-tracking fix filtering", () => {
     assert.equal(shouldLogFix(prev, far, s), true);
   });
 
-  it("requires every active filter to pass when combined (AND semantics)", () => {
-    const s = { ...DEFAULT_GPS_SETTINGS, minTimeS: 10, minDistanceM: 50 };
+  it("requires every enabled filter to pass", () => {
+    const s = {
+      ...DEFAULT_GPS_SETTINGS,
+      recordDistanceM: 0,
+      recordIntervalS: 0,
+      minTimeS: 10,
+      minDistanceM: 50,
+    };
     const prev = fix();
-    const farButSoon = fix({
-      lat: prev.lat + 0.001, // ~111 m
-      timestamp: prev.timestamp + 5_000,
-    });
-    const lateButNear = fix({
-      lat: prev.lat + 0.0001, // ~11 m
-      timestamp: prev.timestamp + 20_000,
-    });
-    const farAndLate = fix({
-      lat: prev.lat + 0.001,
-      timestamp: prev.timestamp + 20_000,
-    });
-    assert.equal(shouldLogFix(prev, farButSoon, s), false);
-    assert.equal(shouldLogFix(prev, lateButNear, s), false);
-    assert.equal(shouldLogFix(prev, farAndLate, s), true);
+    assert.equal(
+      shouldLogFix(prev, fix({ lat: prev.lat + 0.001, timestamp: prev.timestamp + 5_000 }), s),
+      false,
+    );
+    assert.equal(
+      shouldLogFix(prev, fix({ lat: prev.lat + 0.0001, timestamp: prev.timestamp + 20_000 }), s),
+      false,
+    );
+    assert.equal(
+      shouldLogFix(prev, fix({ lat: prev.lat + 0.001, timestamp: prev.timestamp + 20_000 }), s),
+      true,
+    );
+  });
+
+  it("records when either distance or time interval is reached", () => {
+    const s = { ...DEFAULT_GPS_SETTINGS, recordIntervalS: 10, recordDistanceM: 50 };
+    const prev = fix();
+    assert.equal(
+      shouldLogFix(prev, fix({ lat: prev.lat + 0.0001, timestamp: prev.timestamp + 5_000 }), s),
+      false,
+    );
+    assert.equal(
+      shouldLogFix(prev, fix({ lat: prev.lat + 0.001, timestamp: prev.timestamp + 5_000 }), s),
+      true,
+    );
+    assert.equal(
+      shouldLogFix(prev, fix({ lat: prev.lat + 0.0001, timestamp: prev.timestamp + 20_000 }), s),
+      true,
+    );
   });
 });
 

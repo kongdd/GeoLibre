@@ -24,7 +24,7 @@ import time
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -172,6 +172,55 @@ def _remote_project_target(name: str, root: Path) -> Path:
     if not target.is_relative_to(resolved_root):
         raise HTTPException(status_code=400, detail="Invalid project file name")
     return target
+
+
+def _list_remote_projects(root: Path) -> list[str]:
+    resolved_root = root.expanduser().resolve()
+    if not resolved_root.exists():
+        return []
+    return sorted(
+        path.relative_to(resolved_root).as_posix()
+        for directory in resolved_root.iterdir()
+        if directory.is_dir() and not directory.is_symlink()
+        for path in directory.iterdir()
+        if path.is_file()
+        and not path.is_symlink()
+        and path.name.lower().endswith((".geolibre", ".geolibre.json", ".json"))
+    )
+
+
+@app.get("/project/list")
+async def list_projects():
+    """List project files stored under the configured remote root."""
+    root = Path(os.environ.get("GEOLIBRE_REMOTE_PROJECT_ROOT", "/mnt/z/GeoLibre"))
+    try:
+        projects = await run_in_threadpool(_list_remote_projects, root)
+    except OSError as error:
+        raise HTTPException(
+            status_code=500, detail=f"Could not list remote projects: {error}"
+        ) from error
+    return {"projects": projects}
+
+
+@app.get("/project/read")
+async def read_project(name: str):
+    """Read a browser-authored project file from the configured remote root."""
+    root = Path(os.environ.get("GEOLIBRE_REMOTE_PROJECT_ROOT", "/mnt/z/GeoLibre"))
+    target = _remote_project_target(name, root)
+    try:
+        content = await run_in_threadpool(target.read_bytes)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Remote project file not found") from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=500, detail=f"Could not read remote project: {error}"
+        ) from error
+    media_type = (
+        "application/octet-stream"
+        if target.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+        else "application/json"
+    )
+    return Response(content=content, media_type=media_type)
 
 
 @app.post("/project/save")

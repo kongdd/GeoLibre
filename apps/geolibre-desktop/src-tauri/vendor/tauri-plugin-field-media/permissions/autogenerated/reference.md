@@ -36,6 +36,32 @@ Denies the capture_photo command without any pre-configured scope.
 <tr>
 <td>
 
+`field-media:allow-open-photo`
+
+</td>
+<td>
+
+Enables the open_photo command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`field-media:deny-open-photo`
+
+</td>
+<td>
+
+Denies the open_photo command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `field-media:allow-pick-photos`
 
 </td>

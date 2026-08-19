@@ -21,6 +21,7 @@ import {
 import {
   BookOpen,
   Bookmark,
+  Cloud,
   Copy,
   FileCode2,
   FileInput,
@@ -41,7 +42,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDesktopSettingsStore } from "../../../hooks/useDesktopSettings";
 import { isMenuItemVisible } from "../../../lib/ui-profile";
@@ -51,6 +52,7 @@ import {
   REMOTE_PROJECT_ROOT,
   type ProjectDataStorage,
 } from "../../../lib/file-names";
+import { fieldCollectionPointStats } from "../../../lib/field-collection";
 import { formatRecentProjectTime, type ToolbarChrome } from "./constants";
 
 // aria-describedby targets for the "sharing server unavailable" explanation.
@@ -70,7 +72,8 @@ function ProjectPropertiesDialog({
   const isDirty = useAppStore((s) => s.isDirty);
   const metadata = useAppStore((s) => s.metadata);
   const dataStorage = projectDataStorage(metadata);
-  const layerCount = useAppStore((s) => s.layers.length);
+  const layers = useAppStore((s) => s.layers);
+  const fieldStats = useMemo(() => fieldCollectionPointStats(layers), [layers]);
   const groupCount = useAppStore((s) => s.layerGroups.length);
   const status = projectPath
     ? t(isDirty ? "projectProperties.modified" : "projectProperties.saved")
@@ -80,8 +83,11 @@ function ProjectPropertiesDialog({
     [t("projectProperties.path"), projectPath ?? t("projectProperties.unsavedPath")],
     [t("projectProperties.formatVersion"), PROJECT_VERSION],
     [t("projectProperties.status"), status],
-    [t("projectProperties.layers"), String(layerCount)],
+    [t("projectProperties.layers"), String(layers.length)],
     [t("projectProperties.groups"), String(groupCount)],
+    [t("projectProperties.samplingPoints"), String(fieldStats.points)],
+    [t("projectProperties.pointsWithPhotos"), String(fieldStats.pointsWithPhotos)],
+    [t("projectProperties.photos"), String(fieldStats.photos)],
   ];
 
   return (
@@ -144,6 +150,7 @@ interface ProjectMenuProps {
   shareHostStatus: ShareHostStatus;
   onNewProject: () => void;
   onOpenFromFile: () => void;
+  onOpenFromRemote: () => void;
   onOpenFromUrl: () => void;
   onOpenGallery: () => void;
   onImportQgisProject: () => void;
@@ -168,6 +175,7 @@ export function ProjectMenu({
   shareHostStatus,
   onNewProject,
   onOpenFromFile,
+  onOpenFromRemote,
   onOpenFromUrl,
   onOpenGallery,
   onImportQgisProject,
@@ -253,6 +261,10 @@ export function ProjectMenu({
               <DropdownMenuItem onSelect={onOpenFromFile}>
                 <FileText className="me-2 h-3.5 w-3.5" />
                 {t("toolbar.item.fileEllipsis")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onOpenFromRemote}>
+                <Cloud className="me-2 h-3.5 w-3.5" />
+                {t("toolbar.item.remoteEllipsis")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={onOpenFromUrl}>
                 <Link2 className="me-2 h-3.5 w-3.5" />

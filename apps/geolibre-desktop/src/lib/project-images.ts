@@ -73,24 +73,56 @@ function walkStrings(value: unknown, rewrite: (text: string) => string): void {
   }
 }
 
-export function externalizeProjectImages(content: string): ExternalizedProjectImages {
-  if (!content.includes("data:image/")) return { content, files: [] };
-  const project = JSON.parse(content) as unknown;
-  const files = new Map<string, Uint8Array>();
-  walkStrings(project, (text) => {
-    const match = text.match(DATA_URL);
-    if (!match) return text;
-    const ext = extFromMime(match[1]);
-    if (!ext) return text;
-    const bytes = bytesFromBase64(match[2]);
-    const path = `images/${hashHex(bytes)}.${ext}`;
-    files.set(path, bytes);
-    return path;
-  });
+function externalizeDataUrl(text: string, files: Map<string, Uint8Array>): string {
+  const match = text.match(DATA_URL);
+  if (!match) return text;
+  const ext = extFromMime(match[1]);
+  if (!ext) return text;
+  const bytes = bytesFromBase64(match[2]);
+  const path = `images/${hashHex(bytes)}.${ext}`;
+  files.set(path, bytes);
+  return path;
+}
+
+function packedProject(project: unknown, files: Map<string, Uint8Array>): ExternalizedProjectImages {
   return {
     content: JSON.stringify(project),
     files: [...files].map(([path, bytes]) => ({ path, bytes })),
   };
+}
+
+export function externalizeProjectImages(content: string): ExternalizedProjectImages {
+  if (!content.includes("data:image/")) return { content, files: [] };
+  const project = JSON.parse(content) as unknown;
+  const files = new Map<string, Uint8Array>();
+  walkStrings(project, (text) => externalizeDataUrl(text, files));
+  return packedProject(project, files);
+}
+
+/** Resolve Android content URIs and externalize them without retaining base64 copies. */
+export async function externalizeNativeProjectImages(
+  content: string,
+  resolve: (source: string) => Promise<string>,
+): Promise<ExternalizedProjectImages> {
+  if (!content.includes("content://")) return externalizeProjectImages(content);
+  const project = JSON.parse(content) as unknown;
+  const files = new Map<string, Uint8Array>();
+  const sources = new Set<string>();
+  walkStrings(project, (text) => {
+    if (text.startsWith("content://")) sources.add(text);
+    return externalizeDataUrl(text, files);
+  });
+  const replacements = new Map<string, string>();
+  for (const source of sources) {
+    const resolved = await resolve(source);
+    const path = externalizeDataUrl(resolved, files);
+    if (!resolved || path === resolved) {
+      throw new Error("Could not read a project photo from this device.");
+    }
+    replacements.set(source, path);
+  }
+  walkStrings(project, (text) => replacements.get(text) ?? text);
+  return packedProject(project, files);
 }
 
 export async function hydrateProjectImages(

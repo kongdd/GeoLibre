@@ -17,6 +17,7 @@ import {
   drawPreview,
   emptyFeatureCollection,
   featureVertices,
+  fieldCollectionPointStats,
   findCollectionFeatureIndex,
   FIELD_COLLECTION_FLAG,
   getCollectionAttachmentKeys,
@@ -52,7 +53,7 @@ describe("observationLabelStyle", () => {
     assert.equal(labels.field, OBSERVATION_NAME_PROPERTY);
     assert.equal(labels.allowOverlap, true);
     assert.equal(labels.anchor, "bottom");
-    assert.equal(labels.offsetY, -3.25);
+    assert.equal(labels.offsetY, -1.8);
   });
 });
 
@@ -366,6 +367,37 @@ describe("collectionAttachments", () => {
 });
 
 describe("collection layer helpers", () => {
+  it("summarizes sampling points and photos", () => {
+    const metadata = collectionMetadata({ fields: [] });
+    const keys = getCollectionAttachmentKeys({ type: "geojson", metadata });
+    const layers = [
+      {
+        type: "geojson",
+        metadata,
+        geojson: {
+          type: "FeatureCollection" as const,
+          features: [
+            makePointFeature(0, 0, collectionAttachments(["one", "two"], [], [], keys)),
+            makePointFeature(1, 1, {}),
+          ],
+        },
+      },
+      {
+        type: "geojson",
+        metadata: {},
+        geojson: {
+          type: "FeatureCollection" as const,
+          features: [makePointFeature(2, 2, { photo: "ignored" })],
+        },
+      },
+    ];
+    assert.deepEqual(fieldCollectionPointStats(layers), {
+      points: 2,
+      pointsWithPhotos: 1,
+      photos: 2,
+    });
+  });
+
   it("round-trips the schema and geometry through metadata", () => {
     const schema = buildSchema([{ label: "Name", type: "text" }]);
     const meta = collectionMetadata(schema, "polygon", { existing: 1 });

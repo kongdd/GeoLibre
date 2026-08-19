@@ -12,6 +12,7 @@ import { copyCesiumAssets } from "./vite-plugins/copy-cesium-assets";
 import { copyRtlText } from "./vite-plugins/copy-rtl-text";
 import { copyVectorOps } from "./vite-plugins/copy-vector-ops";
 import { proxyBinaryRequestGuarded } from "./vite-proxy-guard";
+import { remoteProjectStore } from "./vite-plugins/remote-project-store";
 
 const GEOAGENT_BROWSER_BUNDLE = "maplibre-gl-geoagent/dist/browser-";
 const EARTH_ENGINE_CONTROL_BUNDLE = "maplibre-gl-earth-engine/dist/";
@@ -961,6 +962,7 @@ export default defineConfig({
     duckdbWasmBundlesPlugin(),
     stripDuckDbWorkerSourcemapPlugin(),
     projectUrlQueryPlugin(),
+    remoteProjectStore(),
     bundledPlugins(path.resolve(__dirname, "public/plugins")),
     copyVectorOps(
       path.resolve(__dirname, "../../backend/geolibre_server/geolibre_server/vector_ops.py"),
@@ -1005,6 +1007,11 @@ export default defineConfig({
       // defaults (node_modules, .git), not a replacement for them.
       ignored: ["**/src-tauri/**"],
     },
+  },
+  preview: {
+    port: 5173,
+    strictPort: true,
+    allowedHosts: ["ecohydro.top"],
   },
   worker: {
     format: "es",

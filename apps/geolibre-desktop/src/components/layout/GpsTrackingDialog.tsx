@@ -83,6 +83,7 @@ interface GpsTrackingDialogProps {
  * per-fix updates stay off the undo history and the layer-sync loop). */
 const ACCURACY_SOURCE = "__gps_accuracy__";
 const TRACK_SOURCE = "__gps_track__";
+const GPS_LAYER_IDS = [`${ACCURACY_SOURCE}-fill`, `${TRACK_SOURCE}-line`] as const;
 /** Position marker/accuracy blue; readable on light and dark basemaps. */
 const GPS_COLOR = "#2563eb";
 /** Live track-log line red, matching the field-collection draw color. */
@@ -166,6 +167,15 @@ function createMarkerElement(): { root: HTMLDivElement; arrow: HTMLDivElement } 
   return { root, arrow };
 }
 
+/** Keep transient GPS overlays above raster basemaps added after tracking starts. */
+export function raiseGpsOverlayLayers(map: maplibregl.Map): void {
+  const present = GPS_LAYER_IDS.filter((id) => map.getLayer(id));
+  if (present.length === 0) return;
+  const order = (map.getStyle().layers ?? []).map(({ id }) => id);
+  if (present.every((id, index) => order.at(index - present.length) === id)) return;
+  for (const id of present) map.moveLayer(id);
+}
+
 /** Lazily (re-)register the overlay sources/layers; heals basemap switches. */
 function ensureGpsSources(map: maplibregl.Map): void {
   // addSource/addLayer throw while a replacement style is still loading; skip
@@ -198,6 +208,7 @@ function ensureGpsSources(map: maplibregl.Map): void {
       },
     });
   }
+  raiseGpsOverlayLayers(map);
 }
 
 function setSourceData(
@@ -524,12 +535,12 @@ export function GpsTrackingDialog({
   useEffect(() => {
     if (!tracking) return;
     const onDragStart = () => setFollowMode(false);
-    // Gated on the source actually being gone, so the frequent styledata
-    // events fired by ordinary style mutations cost one getSource() check.
     const onStyleData = () => {
       const m = getMap();
-      if (!m || m.getSource(TRACK_SOURCE)) return;
+      if (!m) return;
+      const sourcesMissing = !m.getSource(TRACK_SOURCE);
       ensureGpsSources(m);
+      if (!sourcesMissing) return;
       const fix = lastFixRef.current;
       if (fix) setSourceData(m, ACCURACY_SOURCE, accuracyCircle(fix));
       setSourceData(m, TRACK_SOURCE, trackPreview(fixesRef.current));
@@ -760,6 +771,14 @@ export function GpsTrackingDialog({
     const map = getMap();
     if (map) setSourceData(map, TRACK_SOURCE, EMPTY_FC);
   }, [getMap]);
+
+  // Starting GPS also starts a track; stopping GPS pauses it for later saving.
+  useEffect(() => {
+    if (!tracking || recordingRef.current === "recording") return;
+    if (recordingRef.current === "off") clearTrack();
+    else if (fixesRef.current.at(-1)?.length) fixesRef.current.push([]);
+    changeRecording("recording");
+  }, [tracking, clearTrack, changeRecording]);
 
   const handleStartRecording = useCallback(() => {
     if (!canTrack) return;
@@ -1086,8 +1105,23 @@ export function GpsTrackingDialog({
 
               <Separator />
 
-              {/* Settings */}
+              {/* Recording settings and fix filters */}
               <div className="space-y-2">
+                <Label>{t("settings.title")}</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <SettingField
+                    id="gps-record-distance"
+                    label={t("gps.recordDistance")}
+                    value={settings.recordDistanceM}
+                    onChange={(v) => updateSettings({ recordDistanceM: v })}
+                  />
+                  <SettingField
+                    id="gps-record-interval"
+                    label={t("gps.recordInterval")}
+                    value={settings.recordIntervalS}
+                    onChange={(v) => updateSettings({ recordIntervalS: v })}
+                  />
+                </div>
                 <Label>{t("gps.settings")}</Label>
                 <div className="grid grid-cols-3 gap-2">
                   <SettingField

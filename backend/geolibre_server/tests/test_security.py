@@ -64,6 +64,19 @@ def test_remote_project_save_is_confined_and_atomic(
     )
     assert photo.status_code == 200
     assert (root / "survey" / "images" / "a.jpg").read_bytes() == b"jpeg-bytes"
+    assert client.get("/project/list").json() == {
+        "projects": ["survey/survey.geolibre.json"]
+    }
+    assert (
+        client.get(
+            "/project/read", params={"name": "survey/survey.geolibre.json"}
+        ).content
+        == b'{"name":"survey"}'
+    )
+    assert (
+        client.get("/project/read", params={"name": "survey/images/a.jpg"}).content
+        == b"jpeg-bytes"
+    )
 
     escaped = client.post(
         "/project/save",

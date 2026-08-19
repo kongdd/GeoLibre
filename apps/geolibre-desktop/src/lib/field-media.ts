@@ -22,6 +22,10 @@ export function pickNativePhotos(max: number): Promise<NativePhoto[]> {
   return invoke("plugin:field-media|pick_photos", { max });
 }
 
+export function openNativePhoto(uri: string): Promise<void> {
+  return invoke("plugin:field-media|open_photo", { uri });
+}
+
 const photoCache = new Map<string, Promise<string>>();
 
 export function readNativePhoto(uri: string): Promise<string> {

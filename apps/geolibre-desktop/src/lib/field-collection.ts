@@ -86,7 +86,7 @@ export function observationLabelStyle(labels: LabelStyle): LabelStyle {
     field: OBSERVATION_NAME_PROPERTY,
     allowOverlap: true,
     anchor: "bottom",
-    offsetY: -3.25,
+    offsetY: -1.8,
   };
 }
 
@@ -401,6 +401,35 @@ export function getCollectionAttachmentKeys(
     [...occupied, ...foreignPreferred],
     propertyKeys
   );
+}
+
+export interface FieldCollectionPointStats {
+  points: number;
+  pointsWithPhotos: number;
+  photos: number;
+}
+
+/** Summarize point observations and their photo attachments across collection layers. */
+export function fieldCollectionPointStats(
+  layers: readonly CollectionLayerLike[]
+): FieldCollectionPointStats {
+  const stats = { points: 0, pointsWithPhotos: 0, photos: 0 };
+  for (const layer of layers) {
+    if (!isCollectionLayer(layer)) continue;
+    const attachmentKeys = getCollectionAttachmentKeys(layer);
+    for (const feature of layer.geojson?.features ?? []) {
+      if (feature.geometry?.type !== "Point") continue;
+      stats.points += 1;
+      const photos = readCollectionAttachments(
+        feature.properties,
+        [],
+        attachmentKeys
+      ).photos.length;
+      if (photos > 0) stats.pointsWithPhotos += 1;
+      stats.photos += photos;
+    }
+  }
+  return stats;
 }
 
 /** Read a layer's captured geometry type, defaulting to `point`. */
