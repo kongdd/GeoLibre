@@ -29,13 +29,18 @@
     "dataStorage": "数据存储",
     "storageLocal": "本地",
     "storageRemote": "远程",
-    "remoteStoragePath": "远程项目数据保存至 {{path}}。"
+    "remoteStoragePath": "远程项目数据保存至 {{path}}。",
+    "remotePhotoQuality": "远程照片质量",
+    "photoQualityOriginal": "原图（仅新拍摄或重新选择的照片）",
+    "photoQualityOptimized": "优化（最长边 2560 px，JPEG 92）"
   },
   "remoteSave": {
     "saving": "正在保存远程项目",
     "preparing": "正在读取照片…",
-    "progress": "{{completed}}/{{total}} 个文件 · {{saved}} / {{totalSize}}",
+    "progress": "{{completed}}/{{total}} 个待上传文件 · {{saved}} / {{totalSize}}",
+    "projectTotal": "项目实际内容：{{files}} 个文件，共 {{size}}；复用 {{reused}} 个相同文件。",
     "success": "远程保存成功：上传 {{files}} 个文件，共 {{size}}。",
+    "originalUnavailable": "其中 {{count}} 张照片来自先前同步副本，选择“原图”不会放大它们；请在采样点中重新选择原照片以替换。",
     "failed": "远程保存失败：{{error}}"
   },
   "browser": {
@@ -981,6 +986,14 @@
     "observationNamePlaceholder": "可选名称",
     "legacyOverflow": "此观测的附件已超过当前限制；除非主动移除，现有备注和照片将原样保留。",
     "newLayer": "新建采集图层…",
+    "importPoints": "导入调研点",
+    "importingPoints": "正在导入调研点…",
+    "importPointsHint": "从包含 lon、lat、id、name 列的 CSV，或点 Shapefile（.shp/.zip）创建采集图层。",
+    "importId": "编号",
+    "importName": "名称",
+    "importedPoints": "已导入 {{count}} 个调研点；跳过 {{skipped}} 条无效或非点记录。",
+    "importNoPoints": "文件中没有有效的点要素。",
+    "importFailed": "无法导入调研点：{{error}}",
     "layerName": "图层名称",
     "layerNamePlaceholder": "野外观测",
     "geometry": "几何类型",

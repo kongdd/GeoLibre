@@ -6,6 +6,7 @@ import {
   isRemoteProjectFile,
   isRemoteProjectPath,
   projectDataStorage,
+  remotePhotoQuality,
   remoteProjectFilePath,
 } from "../apps/geolibre-desktop/src/lib/file-names";
 
@@ -46,6 +47,8 @@ describe("project storage", () => {
   it("defaults to local and builds a confined remote path", () => {
     assert.equal(projectDataStorage({}), "local");
     assert.equal(projectDataStorage({ dataStorage: "remote" }), "remote");
+    assert.equal(remotePhotoQuality({}), "original");
+    assert.equal(remotePhotoQuality({ remotePhotoQuality: "optimized" }), "optimized");
     assert.equal(remoteProjectFilePath("../trip"), "/mnt/z/GeoLibre/.._trip/.._trip.geolibre.json");
     assert.equal(isRemoteProjectPath("/mnt/z/GeoLibre/trip/trip.geolibre.json"), true);
     assert.equal(isRemoteProjectFile("/mnt/z/GeoLibre/trip/trip.geolibre.json"), true);

@@ -6,9 +6,14 @@ import { DEFAULT_PROJECT_NAME } from "@geolibre/core";
 
 export const REMOTE_PROJECT_ROOT = "/mnt/z/GeoLibre";
 export type ProjectDataStorage = "local" | "remote";
+export type RemotePhotoQuality = "original" | "optimized";
 
 export function projectDataStorage(metadata: Record<string, unknown>): ProjectDataStorage {
   return metadata.dataStorage === "remote" ? "remote" : "local";
+}
+
+export function remotePhotoQuality(metadata: Record<string, unknown>): RemotePhotoQuality {
+  return metadata.remotePhotoQuality === "optimized" ? "optimized" : "original";
 }
 
 export function isRemoteProjectPath(path: string): boolean {

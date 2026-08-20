@@ -42,6 +42,7 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
   const saveNameLabels = projectFiles.saveNamePrompt ?? lastSaveNamePrompt.current;
   const remoteProgress = projectFiles.remoteSaveProgress;
   const remoteResult = projectFiles.remoteSaveResult;
+  const remoteStats = remoteProgress ?? (remoteResult?.status === "success" ? remoteResult : null);
   const remotePercent = remoteProgress?.totalBytes
     ? Math.round((remoteProgress.uploadedBytes / remoteProgress.totalBytes) * 100)
     : 0;
@@ -109,6 +110,23 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
                 ) : (
                   <p className="text-xs text-muted-foreground">{t("remoteSave.preparing")}</p>
                 )
+              ) : null}
+              {remoteStats?.projectFiles ? (
+                <p className="text-xs text-muted-foreground">
+                  {t("remoteSave.projectTotal", {
+                    files: remoteStats.projectFiles,
+                    size: formatBytes(remoteStats.projectBytes),
+                    reused: remoteStats.reusedFiles,
+                  })}
+                </p>
+              ) : null}
+              {remoteResult?.status === "success" &&
+              remoteResult.retainedPhotoReferences > 0 ? (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  {t("remoteSave.originalUnavailable", {
+                    count: remoteResult.retainedPhotoReferences,
+                  })}
+                </p>
               ) : null}
             </div>
             {remoteResult ? (

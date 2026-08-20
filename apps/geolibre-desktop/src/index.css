@@ -4035,6 +4035,25 @@ html.dark
   margin-left: auto;
 }
 
+.elevation-profile-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--ep-muted);
+}
+
+.elevation-profile-source {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  color: var(--ep-text);
+  background: var(--ep-surface);
+  border: 1px solid var(--ep-border);
+  border-radius: 4px;
+}
+
 /* Status line */
 .elevation-profile-status {
   margin-top: 8px;

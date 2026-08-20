@@ -47,7 +47,9 @@ import {
   isRemoteProjectFile,
   isRemoteProjectPath,
   projectDataStorage,
+  remotePhotoQuality,
   remoteProjectFilePath,
+  type RemotePhotoQuality,
 } from "../lib/file-names";
 import { mergeStringLists } from "../lib/string-lists";
 import { fetchProjectFromUrl } from "../lib/project-url";
@@ -865,20 +867,33 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     }
   };
 
-  const saveRemoteWithFeedback = async (content: string, path: string): Promise<string | null> => {
+  const saveRemoteWithFeedback = async (
+    content: string,
+    path: string,
+    photoQuality: RemotePhotoQuality,
+  ): Promise<string | null> => {
     let latest: RemoteSaveProgress = {
       completedFiles: 0,
       totalFiles: 0,
       uploadedBytes: 0,
       totalBytes: 0,
+      projectFiles: 0,
+      projectBytes: 0,
+      reusedFiles: 0,
+      retainedPhotoReferences: 0,
     };
     setRemoteSaveResult(null);
     setRemoteSaveProgress(latest);
     try {
-      const saved = await saveRemoteProjectFile(content, path, (progress) => {
-        latest = progress;
-        setRemoteSaveProgress(progress);
-      });
+      const saved = await saveRemoteProjectFile(
+        content,
+        path,
+        (progress) => {
+          latest = progress;
+          setRemoteSaveProgress(progress);
+        },
+        photoQuality,
+      );
       setRemoteSaveProgress(null);
       if (saved) setRemoteSaveResult({ status: "success", ...latest });
       return saved;
@@ -936,7 +951,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
         const existingLocalPath =
           !remotePath && projectPath && !isHttpUrl(projectPath) ? projectPath : null;
         const path = remotePath
-          ? await saveRemoteWithFeedback(content, remotePath)
+          ? await saveRemoteWithFeedback(content, remotePath, remotePhotoQuality(project.metadata))
           : existingLocalPath
             ? await saveProjectFileToPath(content, existingLocalPath)
             : await saveProjectFile(content, ensureProjectFileName(project.name));
@@ -1267,7 +1282,11 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     let path: string | null;
     try {
       path = remotePath
-        ? await saveRemoteWithFeedback(contentToSave, remotePath)
+        ? await saveRemoteWithFeedback(
+            contentToSave,
+            remotePath,
+            remotePhotoQuality(project.metadata),
+          )
         : !options?.saveAs && existingLocalPath
           ? await saveProjectFileToPath(contentToSave, existingLocalPath, saveName)
           : await saveProjectFile(

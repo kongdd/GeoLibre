@@ -298,6 +298,16 @@ export async function listRemoteProjects(
   return result.projects;
 }
 
+export function remoteProjectFileUrl(
+  fileName: string,
+  thumbnail = false,
+  baseUrl = DEFAULT_SIDECAR_URL,
+): string {
+  const url = remoteProjectStorageUrl(fileName, "read", baseUrl);
+  if (thumbnail) url.searchParams.set("thumbnail", "1");
+  return url.toString();
+}
+
 export async function readProjectFromRemote(
   fileName: string,
   baseUrl = DEFAULT_SIDECAR_URL,

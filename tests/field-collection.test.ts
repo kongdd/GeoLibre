@@ -23,6 +23,7 @@ import {
   getCollectionAttachmentKeys,
   getGeometryType,
   getSchema,
+  importCollectionPoints,
   isCollectionLayer,
   makeLineFeature,
   makePointFeature,
@@ -629,6 +630,36 @@ describe("collection layer helpers", () => {
         fields: [],
       }
     );
+  });
+});
+
+describe("importCollectionPoints", () => {
+  it("normalizes CSV/Shapefile point IDs and names", () => {
+    const imported = importCollectionPoints({
+      type: "FeatureCollection",
+      features: [
+        makePointFeature(110.1, 32.6, { ID: "site-1", NAME: "河口" }),
+        makePointFeature(110.2, 32.7, { id: "site-1", name: "坝址" }),
+        makeLineFeature(
+          [
+            [110, 32],
+            [111, 33],
+          ],
+          { id: "line" }
+        ),
+      ],
+    });
+
+    assert.equal(imported.skipped, 1);
+    assert.deepEqual(
+      imported.data.features.map((feature) => feature.id),
+      ["site-1", "site-1_2"]
+    );
+    assert.deepEqual(imported.data.features[0].properties, {
+      id: "site-1",
+      name: "河口",
+      [OBSERVATION_NAME_PROPERTY]: "河口",
+    });
   });
 });
 

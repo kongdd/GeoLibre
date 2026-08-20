@@ -2,7 +2,6 @@ import {
   hasPathTraversal,
   isAbsoluteFilesystemPath,
   parseProject,
-  resolvePhotoSource,
   type GeoLibreProject,
 } from "@geolibre/core";
 import {
@@ -50,8 +49,14 @@ import {
   type StartupSnapshotSlot,
 } from "./startup-project-snapshot";
 import { IS_MAS_BUILD } from "./build-flags";
-import { isRemoteProjectFile, isRemoteProjectPath, REMOTE_PROJECT_ROOT } from "./file-names";
-import { externalizeNativeProjectImages, hydrateProjectImages } from "./project-images";
+import {
+  isRemoteProjectFile,
+  isRemoteProjectPath,
+  REMOTE_PROJECT_ROOT,
+  type RemotePhotoQuality,
+} from "./file-names";
+import { readNativePhoto, setRemoteProjectPhotoPrefix } from "./field-media";
+import { externalizeNativeProjectImages } from "./project-images";
 import type { DuckDbVectorFile } from "./duckdb-vector-loader";
 import {
   confirmLargeDataset,
@@ -2981,21 +2986,13 @@ export async function openRecentProjectFile(
 }
 
 async function hydrateRemoteProjectText(content: string, path: string): Promise<string> {
-  if (!path.startsWith(`${REMOTE_PROJECT_ROOT}/`) || !content.includes('"images/')) {
+  if (!path.startsWith(`${REMOTE_PROJECT_ROOT}/`)) {
+    setRemoteProjectPhotoPrefix(null);
     return content;
   }
   const dir = path.slice(0, path.lastIndexOf("/"));
-  return hydrateProjectImages(content, async (relative) => {
-    try {
-      if (!isTauri() || isAndroid()) {
-        const prefix = dir.slice(REMOTE_PROJECT_ROOT.length + 1);
-        return await readProjectFromRemote(`${prefix}/${relative}`);
-      }
-      return await readFile(`${dir}/${relative}`);
-    } catch {
-      return null;
-    }
-  });
+  setRemoteProjectPhotoPrefix(dir.slice(REMOTE_PROJECT_ROOT.length + 1));
+  return content;
 }
 
 const uploadedRemoteProjectImages = new Set<string>();
@@ -3005,27 +3002,51 @@ export interface RemoteSaveProgress {
   totalFiles: number;
   uploadedBytes: number;
   totalBytes: number;
+  projectFiles: number;
+  projectBytes: number;
+  reusedFiles: number;
+  retainedPhotoReferences: number;
 }
 
 export async function saveRemoteProjectFile(
   content: string,
   path: string,
   onProgress?: (progress: RemoteSaveProgress) => void,
+  photoQuality: RemotePhotoQuality = "original",
+  readPhoto = readNativePhoto,
 ): Promise<string | null> {
-  const packed = await externalizeNativeProjectImages(content, resolvePhotoSource);
+  const packed = await externalizeNativeProjectImages(content, (source) =>
+    readPhoto(source, photoQuality),
+  );
   const dir = path.slice(0, path.lastIndexOf("/"));
   const prefix = dir.slice(REMOTE_PROJECT_ROOT.length + 1);
-  const projectBytes = new Blob([packed.content]).size;
+  const projectContentBytes = new Blob([packed.content]).size;
+  const projectFiles = packed.files.length + 1;
+  const projectBytes =
+    projectContentBytes + packed.files.reduce((sum, file) => sum + file.bytes.length, 0);
+  const retainedPhotoReferences = packed.imageReferences - packed.nativeReferences;
   // Android is a Tauri host but cannot mount the server's /mnt/z filesystem.
   if (!isTauri() || isAndroid()) {
     const files = packed.files.filter(
       (file) => !uploadedRemoteProjectImages.has(`${prefix}/${file.path}`),
     );
     const totalFiles = files.length + 1;
-    const totalBytes = projectBytes + files.reduce((sum, file) => sum + file.bytes.length, 0);
+    const totalBytes =
+      projectContentBytes + files.reduce((sum, file) => sum + file.bytes.length, 0);
+    const reusedFiles = packed.files.length - files.length;
     let completedFiles = 0;
     let uploadedBytes = 0;
-    const report = () => onProgress?.({ completedFiles, totalFiles, uploadedBytes, totalBytes });
+    const report = () =>
+      onProgress?.({
+        completedFiles,
+        totalFiles,
+        uploadedBytes,
+        totalBytes,
+        projectFiles,
+        projectBytes,
+        reusedFiles,
+        retainedPhotoReferences,
+      });
     report();
     await Promise.all(
       files.map(async (file) => {
@@ -3042,15 +3063,25 @@ export async function saveRemoteProjectFile(
       `${prefix}/${path.slice(path.lastIndexOf("/") + 1)}`,
     );
     completedFiles += 1;
-    uploadedBytes += projectBytes;
+    uploadedBytes += projectContentBytes;
     report();
     return path;
   }
-  const totalFiles = packed.files.length + 1;
-  const totalBytes = projectBytes + packed.files.reduce((sum, file) => sum + file.bytes.length, 0);
+  const totalFiles = projectFiles;
+  const totalBytes = projectBytes;
   let completedFiles = 0;
   let uploadedBytes = 0;
-  const report = () => onProgress?.({ completedFiles, totalFiles, uploadedBytes, totalBytes });
+  const report = () =>
+    onProgress?.({
+      completedFiles,
+      totalFiles,
+      uploadedBytes,
+      totalBytes,
+      projectFiles,
+      projectBytes,
+      reusedFiles: 0,
+      retainedPhotoReferences,
+    });
   report();
   if (packed.files.length > 0) await mkdir(`${dir}/images`, { recursive: true });
   else await mkdir(dir, { recursive: true });
@@ -3062,7 +3093,7 @@ export async function saveRemoteProjectFile(
   }
   await writeTextFile(path, packed.content);
   completedFiles += 1;
-  uploadedBytes += projectBytes;
+  uploadedBytes += projectContentBytes;
   report();
   return path;
 }

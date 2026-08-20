@@ -1,11 +1,15 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { Plugin } from "vite";
 
 const ENDPOINT = "/__geolibre_remote_project";
 const MAX_BYTES = 600 * 1024 * 1024;
+const execFileAsync = promisify(execFile);
+
 const TAURI_ORIGINS = new Set([
   "http://tauri.localhost",
   "https://tauri.localhost",
@@ -61,6 +65,34 @@ async function listProjects(root: string): Promise<string[]> {
       }),
   );
   return projects.flat().sort();
+}
+
+async function readThumbnail(target: string): Promise<{ content: Buffer; jpeg: boolean }> {
+  const cacheDir = path.join(path.dirname(path.dirname(target)), ".thumbnails");
+  const cached = path.join(cacheDir, `${path.basename(target)}.jpg`);
+  try {
+    return { content: await readFile(cached), jpeg: true };
+  } catch {
+    await mkdir(cacheDir, { recursive: true });
+  }
+  const temporary = `${cached}.${randomUUID()}.tmp.jpg`;
+  try {
+    await execFileAsync("convert", [
+      target,
+      "-auto-orient",
+      "-thumbnail",
+      "480x480>",
+      "-strip",
+      "-quality",
+      "75",
+      temporary,
+    ]);
+    await rename(temporary, cached);
+    return { content: await readFile(cached), jpeg: true };
+  } catch {
+    await rm(temporary, { force: true });
+    return { content: await readFile(target), jpeg: false };
+  }
 }
 
 async function requestBody(req: IncomingMessage): Promise<Buffer> {
@@ -125,15 +157,21 @@ export function remoteProjectStore(): Plugin {
       }
       if (req.method === "GET") {
         try {
-          const content = await readFile(target);
+          const isImage = /\.(jpe?g|png|webp|gif)$/i.test(target);
+          const thumbnail = isImage && requestUrl.searchParams.get("thumbnail") === "1";
+          const result = thumbnail
+            ? await readThumbnail(target)
+            : { content: await readFile(target), jpeg: false };
           res.statusCode = 200;
           res.setHeader(
             "Content-Type",
-            /\.(jpe?g|png|webp|gif)$/i.test(target)
-              ? "application/octet-stream"
-              : "application/json",
+            thumbnail && result.jpeg
+              ? "image/jpeg"
+              : isImage
+                ? "application/octet-stream"
+                : "application/json",
           );
-          res.end(content);
+          res.end(result.content);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") {
             json(res, 404, { detail: "Remote project file not found" });

@@ -29,13 +29,18 @@
     "dataStorage": "Data storage",
     "storageLocal": "Local",
     "storageRemote": "Remote",
-    "remoteStoragePath": "Remote project data is saved to {{path}}."
+    "remoteStoragePath": "Remote project data is saved to {{path}}.",
+    "remotePhotoQuality": "Remote photo quality",
+    "photoQualityOriginal": "Original (newly captured or reselected photos only)",
+    "photoQualityOptimized": "Optimized (max 2560 px, JPEG 92)"
   },
   "remoteSave": {
     "saving": "Saving remote project",
     "preparing": "Preparing photos…",
-    "progress": "{{completed}}/{{total}} files · {{saved}} / {{totalSize}}",
+    "progress": "{{completed}}/{{total}} files to upload · {{saved}} / {{totalSize}}",
+    "projectTotal": "Project content: {{files}} files, {{size}}; {{reused}} identical files reused.",
     "success": "Remote save complete: {{files}} files, {{size}} uploaded.",
+    "originalUnavailable": "{{count}} photos came from a previous synchronized copy. Original quality cannot enlarge them; reselect the originals in each observation to replace them.",
     "failed": "Remote save failed: {{error}}"
   },
   "browser": {
@@ -1048,6 +1053,14 @@
     "observationNamePlaceholder": "Optional name",
     "legacyOverflow": "This observation exceeds the current attachment limits. Existing notes and photos will be preserved unless you remove them.",
     "newLayer": "New collection layer…",
+    "importPoints": "Import survey points",
+    "importingPoints": "Importing points…",
+    "importPointsHint": "Create a point collection from CSV columns lon, lat, id, name or from a point Shapefile (.shp/.zip).",
+    "importId": "ID",
+    "importName": "Name",
+    "importedPoints": "Imported {{count}} survey points; skipped {{skipped}} invalid or non-point records.",
+    "importNoPoints": "The file contains no valid point features.",
+    "importFailed": "Could not import survey points: {{error}}",
     "layerName": "Layer name",
     "layerNamePlaceholder": "Field Observations",
     "geometry": "Geometry",

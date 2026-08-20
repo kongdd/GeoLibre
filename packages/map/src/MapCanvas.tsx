@@ -14,6 +14,7 @@ import {
   PHOTOS_PROPERTY,
   nearestPointFeatureSelectionId,
   pointFeatureSelectionId,
+  resolveOriginalPhotoSource,
   resolvePhotoSource,
   useAppStore,
   type GeoLibreLayer,
@@ -189,11 +190,14 @@ function identifyPhotoKeys(layer?: GeoLibreLayer): IdentifyPhotoKeys {
 }
 
 const INLINE_PHOTO_SOURCE = /^data:image\/(?!svg)[\w.+-]+;base64,/i;
+const REMOTE_PHOTO_SOURCE = /^images\/[^/]+\.(jpe?g|png|webp|gif)$/i;
 
 function isPhotoSource(value: unknown): value is string {
   return (
     typeof value === "string" &&
-    (INLINE_PHOTO_SOURCE.test(value) || value.startsWith("content://"))
+    (INLINE_PHOTO_SOURCE.test(value) ||
+      REMOTE_PHOTO_SOURCE.test(value) ||
+      value.startsWith("content://"))
   );
 }
 
@@ -206,7 +210,11 @@ function loadPhotoButton(
   void resolvePhotoSource(source).then((resolved) => {
     if (!resolved) return;
     image.src = resolved;
-    button.addEventListener("click", () => openPhotoFullscreen(resolved, alt));
+    button.addEventListener("click", () => {
+      void resolveOriginalPhotoSource(source).then((original) => {
+        if (original) openPhotoFullscreen(original, alt);
+      });
+    });
   });
 }
 

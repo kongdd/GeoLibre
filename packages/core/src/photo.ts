@@ -56,7 +56,7 @@ export function fieldCollectionAttachmentKeysFromMetadata(
   };
 }
 
-export type PhotoSourceResolver = (source: string) => Promise<string>;
+export type PhotoSourceResolver = (source: string, original: boolean) => Promise<string>;
 let photoSourceResolver: PhotoSourceResolver | null = null;
 
 /** Install the host-specific reader used for native content URIs. */
@@ -64,10 +64,14 @@ export function setPhotoSourceResolver(resolver: PhotoSourceResolver | null): vo
   photoSourceResolver = resolver;
 }
 
-/** Resolve an inline image unchanged, or load a native photo on demand. */
+/** Resolve a lightweight preview without loading a remote original. */
 export function resolvePhotoSource(source: string): Promise<string> {
-  if (!source.startsWith("content://")) return Promise.resolve(source);
-  return photoSourceResolver?.(source) ?? Promise.resolve("");
+  return photoSourceResolver?.(source, false) ?? Promise.resolve(source);
+}
+
+/** Resolve the original image only when the user opens it. */
+export function resolveOriginalPhotoSource(source: string): Promise<string> {
+  return photoSourceResolver?.(source, true) ?? Promise.resolve(source);
 }
 
 /**

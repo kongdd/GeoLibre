@@ -35,8 +35,14 @@ struct PickArgs {
 }
 
 #[derive(Serialize)]
+struct UriArgs<'a> {
+    uri: &'a str,
+}
+
+#[derive(Serialize)]
 struct ReadArgs<'a> {
     uri: &'a str,
+    quality: &'a str,
 }
 
 struct FieldMedia<R: Runtime>(PluginHandle<R>);
@@ -58,13 +64,13 @@ impl<R: Runtime> FieldMedia<R> {
 
     fn open_photo(&self, uri: &str) -> Result<(), String> {
         self.0
-            .run_mobile_plugin::<()>("openPhoto", ReadArgs { uri })
+            .run_mobile_plugin::<()>("openPhoto", UriArgs { uri })
             .map_err(|error| error.to_string())
     }
 
-    fn read_photo(&self, uri: &str) -> Result<String, String> {
+    fn read_photo(&self, uri: &str, quality: &str) -> Result<String, String> {
         self.0
-            .run_mobile_plugin::<ReadResponse>("readPhoto", ReadArgs { uri })
+            .run_mobile_plugin::<ReadResponse>("readPhoto", ReadArgs { uri, quality })
             .map(|response| response.data_url)
             .map_err(|error| error.to_string())
     }
@@ -89,8 +95,13 @@ async fn open_photo<R: Runtime>(app: AppHandle<R>, uri: String) -> Result<(), St
 }
 
 #[tauri::command]
-async fn read_photo<R: Runtime>(app: AppHandle<R>, uri: String) -> Result<String, String> {
-    app.state::<FieldMedia<R>>().read_photo(&uri)
+async fn read_photo<R: Runtime>(
+    app: AppHandle<R>,
+    uri: String,
+    quality: Option<String>,
+) -> Result<String, String> {
+    app.state::<FieldMedia<R>>()
+        .read_photo(&uri, quality.as_deref().unwrap_or("original"))
 }
 
 fn init_mobile<R: Runtime, C: serde::de::DeserializeOwned>(

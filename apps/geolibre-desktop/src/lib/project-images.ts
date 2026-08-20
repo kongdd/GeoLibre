@@ -24,6 +24,8 @@ const EXT_MIME: Record<string, string> = {
 export interface ExternalizedProjectImages {
   content: string;
   files: { path: string; bytes: Uint8Array }[];
+  imageReferences: number;
+  nativeReferences: number;
 }
 
 export function bytesFromBase64(b64: string): Uint8Array {
@@ -84,19 +86,33 @@ function externalizeDataUrl(text: string, files: Map<string, Uint8Array>): strin
   return path;
 }
 
-function packedProject(project: unknown, files: Map<string, Uint8Array>): ExternalizedProjectImages {
+function packedProject(
+  project: unknown,
+  files: Map<string, Uint8Array>,
+  imageReferences: number,
+  nativeReferences: number,
+): ExternalizedProjectImages {
   return {
     content: JSON.stringify(project),
     files: [...files].map(([path, bytes]) => ({ path, bytes })),
+    imageReferences,
+    nativeReferences,
   };
 }
 
 export function externalizeProjectImages(content: string): ExternalizedProjectImages {
-  if (!content.includes("data:image/")) return { content, files: [] };
+  if (!content.includes("data:image/")) {
+    return { content, files: [], imageReferences: 0, nativeReferences: 0 };
+  }
   const project = JSON.parse(content) as unknown;
   const files = new Map<string, Uint8Array>();
-  walkStrings(project, (text) => externalizeDataUrl(text, files));
-  return packedProject(project, files);
+  let imageReferences = 0;
+  walkStrings(project, (text) => {
+    const path = externalizeDataUrl(text, files);
+    if (path !== text) imageReferences += 1;
+    return path;
+  });
+  return packedProject(project, files, imageReferences, 0);
 }
 
 /** Resolve Android content URIs and externalize them without retaining base64 copies. */
@@ -108,9 +124,18 @@ export async function externalizeNativeProjectImages(
   const project = JSON.parse(content) as unknown;
   const files = new Map<string, Uint8Array>();
   const sources = new Set<string>();
+  let imageReferences = 0;
+  let nativeReferences = 0;
   walkStrings(project, (text) => {
-    if (text.startsWith("content://")) sources.add(text);
-    return externalizeDataUrl(text, files);
+    if (text.startsWith("content://")) {
+      sources.add(text);
+      imageReferences += 1;
+      nativeReferences += 1;
+      return text;
+    }
+    const path = externalizeDataUrl(text, files);
+    if (path !== text) imageReferences += 1;
+    return path;
   });
   const replacements = new Map<string, string>();
   for (const source of sources) {
@@ -122,7 +147,7 @@ export async function externalizeNativeProjectImages(
     replacements.set(source, path);
   }
   walkStrings(project, (text) => replacements.get(text) ?? text);
-  return packedProject(project, files);
+  return packedProject(project, files, imageReferences, nativeReferences);
 }
 
 export async function hydrateProjectImages(

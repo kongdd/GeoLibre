@@ -49,8 +49,10 @@ import { isMenuItemVisible } from "../../../lib/ui-profile";
 import type { ShareHostStatus } from "../../../lib/share-geolibre";
 import {
   projectDataStorage,
+  remotePhotoQuality,
   REMOTE_PROJECT_ROOT,
   type ProjectDataStorage,
+  type RemotePhotoQuality,
 } from "../../../lib/file-names";
 import { fieldCollectionPointStats } from "../../../lib/field-collection";
 import { formatRecentProjectTime, type ToolbarChrome } from "./constants";
@@ -72,6 +74,7 @@ function ProjectPropertiesDialog({
   const isDirty = useAppStore((s) => s.isDirty);
   const metadata = useAppStore((s) => s.metadata);
   const dataStorage = projectDataStorage(metadata);
+  const photoQuality = remotePhotoQuality(metadata);
   const layers = useAppStore((s) => s.layers);
   const fieldStats = useMemo(() => fieldCollectionPointStats(layers), [layers]);
   const groupCount = useAppStore((s) => s.layerGroups.length);
@@ -128,9 +131,28 @@ function ProjectPropertiesDialog({
             <option value="remote">{t("projectProperties.storageRemote")}</option>
           </Select>
           {dataStorage === "remote" ? (
-            <p className="text-xs text-muted-foreground">
-              {t("projectProperties.remoteStoragePath", { path: REMOTE_PROJECT_ROOT })}
-            </p>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {t("projectProperties.remoteStoragePath", { path: REMOTE_PROJECT_ROOT })}
+              </p>
+              <Label htmlFor="remote-photo-quality">
+                {t("projectProperties.remotePhotoQuality")}
+              </Label>
+              <Select
+                id="remote-photo-quality"
+                value={photoQuality}
+                onChange={(event) => {
+                  const value = event.target.value as RemotePhotoQuality;
+                  useAppStore.setState((state) => ({
+                    metadata: { ...state.metadata, remotePhotoQuality: value },
+                    isDirty: true,
+                  }));
+                }}
+              >
+                <option value="original">{t("projectProperties.photoQualityOriginal")}</option>
+                <option value="optimized">{t("projectProperties.photoQualityOptimized")}</option>
+              </Select>
+            </div>
           ) : null}
         </div>
       </DialogContent>

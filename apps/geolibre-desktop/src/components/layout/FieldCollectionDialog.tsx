@@ -15,6 +15,7 @@ import {
   editorTrackingFieldNames,
   getAttributeFormField,
   isAttributeFormFieldVisible,
+  resolveOriginalPhotoSource,
   resolvePhotoSource,
   resolveSvgSource,
   stampFeatureEditorTracking,
@@ -52,6 +53,7 @@ import {
   Save,
   Trash2,
   Undo2,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -72,6 +74,7 @@ import {
   getGeometryType,
   getSchema,
   type GeometryType,
+  importCollectionPoints,
   isCollectionLayer,
   MAX_NOTE_LENGTH,
   MAX_NOTES_PER_FEATURE,
@@ -115,6 +118,7 @@ import {
 } from "../../lib/photo-bearing";
 import { releaseBodyPointerEvents } from "../../lib/radix-compat";
 import { isCurrentCameraTask, readFieldPhoto } from "../../lib/field-photo";
+import { openVectorFileWithFallback } from "../../lib/tauri-io";
 
 interface FieldCollectionDialogProps {
   open: boolean;
@@ -362,6 +366,7 @@ export function FieldCollectionDialog({
   const [attachmentsDirty, setAttachmentsDirty] = useState(false);
   const [readingPhotos, setReadingPhotos] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
+  const [importingPoints, setImportingPoints] = useState(false);
   const [collectingPhotoBearing, setCollectingPhotoBearing] = useState(false);
   const [picking, setPicking] = useState(false); // point: one-shot map click
   const [drawing, setDrawing] = useState(false); // line/polygon: multi-vertex
@@ -1270,6 +1275,40 @@ export function FieldCollectionDialog({
     [activeLayer, persistProject, t, updateLayer]
   );
 
+  const createCollectionLayer = useCallback(
+    (
+      name: string,
+      collectionSchema: CollectionSchema,
+      layerGeometry: GeometryType,
+      data = emptyFeatureCollection(),
+    ) => {
+      const id = addGeoJsonLayer(name, data);
+      const layer = useAppStore.getState().layers.find((item) => item.id === id);
+      updateLayer(id, {
+        metadata: {
+          ...collectionMetadata(collectionSchema, layerGeometry),
+          ...(layerGeometry === "point"
+            ? {
+                [HISTORY_POINT_MARKER_KEY]: true,
+                [OBSERVATION_LABELS_KEY]: true,
+              }
+            : {}),
+        },
+        ...(layerGeometry === "point" && layer
+          ? {
+              style: {
+                ...layer.style,
+                ...HISTORY_POINT_STYLE,
+                labels: observationLabelStyle(layer.style.labels),
+              },
+            }
+          : {}),
+      });
+      return id;
+    },
+    [addGeoJsonLayer, updateLayer],
+  );
+
   const handleCreateLayer = useCallback(async () => {
     // Guard against a fast double-tap creating two identical layers before the
     // setLayerId re-render swaps the setup step out (reset in the layerId effect).
@@ -1281,43 +1320,72 @@ export function FieldCollectionDialog({
         type: d.type,
         required: d.required,
         options: d.type === "choice" ? parseOptions(d.optionsText) : undefined,
-      }))
+      })),
     );
     const name = layerName.trim() || t("fieldCollection.layerNamePlaceholder");
-    const id = addGeoJsonLayer(name, emptyFeatureCollection());
-    const layer = useAppStore.getState().layers.find((item) => item.id === id);
-    updateLayer(id, {
-      metadata: {
-        ...collectionMetadata(collectionSchema, geometry),
-        ...(geometry === "point"
-          ? {
-              [HISTORY_POINT_MARKER_KEY]: true,
-              [OBSERVATION_LABELS_KEY]: true,
-            }
-          : {}),
-      },
-      ...(geometry === "point" && layer
-        ? {
-            style: {
-              ...layer.style,
-              ...HISTORY_POINT_STYLE,
-              labels: observationLabelStyle(layer.style.labels),
-            },
-          }
-        : {}),
-    });
+    const id = createCollectionLayer(name, collectionSchema, geometry);
     await persistProject();
     setLayerId(id);
     setNotice(null);
-  }, [
-    drafts,
-    layerName,
-    geometry,
-    addGeoJsonLayer,
-    persistProject,
-    updateLayer,
-    t,
-  ]);
+  }, [drafts, layerName, geometry, createCollectionLayer, persistProject, t]);
+
+  const handleImportPoints = useCallback(async () => {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    setImportingPoints(true);
+    setNotice(null);
+    try {
+      const result = await openVectorFileWithFallback({
+        onLargeDataset: ({ name, featureCount }) =>
+          window.confirm(
+            t("toolbar.item.largeVectorDesc", {
+              name,
+              count: featureCount.toLocaleString(),
+            }),
+          ),
+      });
+      if (!result) return;
+      const imported = importCollectionPoints(result.data);
+      if (imported.data.features.length === 0) {
+        setNotice(t("fieldCollection.importNoPoints"));
+        return;
+      }
+      const fileName = result.path.split(/[/\\]/).pop() ?? "";
+      const name =
+        fileName.replace(/\.(csv|tsv|shp|zip)$/i, "") ||
+        t("fieldCollection.layerNamePlaceholder");
+      const importSchema: CollectionSchema = {
+        fields: [
+          { key: "id", label: t("fieldCollection.importId"), type: "text" },
+          { key: "name", label: t("fieldCollection.importName"), type: "text" },
+        ],
+      };
+      const id = createCollectionLayer(name, importSchema, "point", imported.data);
+      setLayerId(id);
+      const saved = await persistProject();
+      setNotice(
+        saved
+          ? t("fieldCollection.importedPoints", {
+              count: imported.data.features.length,
+              skipped: imported.skipped,
+            })
+          : t("fieldCollection.saveFailed"),
+      );
+      const layer = useAppStore.getState().layers.find((item) => item.id === id);
+      if (layer) mapControllerRef.current?.fitLayer(layer);
+    } catch (error) {
+      if (error instanceof Error && error.name === "VectorLoadCancelledError") return;
+      console.error("Could not import Field Collection points", error);
+      setNotice(
+        t("fieldCollection.importFailed", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    } finally {
+      creatingRef.current = false;
+      setImportingPoints(false);
+    }
+  }, [createCollectionLayer, mapControllerRef, persistProject, t]);
 
   const handlePointStyle = useCallback(
     (
@@ -1747,6 +1815,8 @@ export function FieldCollectionDialog({
                   drafts={drafts}
                   onDrafts={setDrafts}
                   newDraft={makeDraft}
+                  importing={importingPoints}
+                  onImport={handleImportPoints}
                   onCreate={handleCreateLayer}
                 />
               ) : (
@@ -2087,6 +2157,8 @@ interface SetupStepProps {
   drafts: DraftField[];
   onDrafts: (next: DraftField[]) => void;
   newDraft: () => DraftField;
+  importing: boolean;
+  onImport: () => void;
   onCreate: () => void;
 }
 
@@ -2098,6 +2170,8 @@ function SetupStep({
   drafts,
   onDrafts,
   newDraft,
+  importing,
+  onImport,
   onCreate,
 }: SetupStepProps) {
   const { t } = useTranslation();
@@ -2106,6 +2180,22 @@ function SetupStep({
 
   return (
     <div className="space-y-3">
+      <div className="space-y-2 rounded-md border p-3">
+        <p className="text-sm text-muted-foreground">
+          {t("fieldCollection.importPointsHint")}
+        </p>
+        <Button className="w-full" variant="outline" onClick={onImport} disabled={importing}>
+          {importing ? (
+            <Loader2 className="me-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Upload className="me-2 h-4 w-4" />
+          )}
+          {t(importing ? "fieldCollection.importingPoints" : "fieldCollection.importPoints")}
+        </Button>
+      </div>
+
+      <Separator />
+
       <div className="space-y-1.5">
         <Label htmlFor="fc-layer-name">{t("fieldCollection.layerName")}</Label>
         <Input
@@ -2734,7 +2824,8 @@ function CaptureStep({
 
           {previewIndex != null && resolvedPhotos[previewIndex] && (
             <PhotoLightbox
-              photos={resolvedPhotos}
+              photos={photos}
+              previews={resolvedPhotos}
               photoNames={photoNames}
               photoBearings={photoBearings}
               index={previewIndex}
@@ -2755,6 +2846,7 @@ function CaptureStep({
 
 interface PhotoLightboxProps {
   photos: string[];
+  previews: string[];
   photoNames: string[];
   photoBearings: (number | null)[];
   index: number;
@@ -2765,6 +2857,7 @@ interface PhotoLightboxProps {
 
 function PhotoLightbox({
   photos,
+  previews,
   photoNames,
   photoBearings,
   index,
@@ -2774,12 +2867,24 @@ function PhotoLightbox({
 }: PhotoLightboxProps) {
   const { t } = useTranslation();
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [original, setOriginal] = useState("");
   const previous = () => onIndex((index - 1 + photos.length) % photos.length);
   const next = () => onIndex((index + 1) % photos.length);
 
   useEffect(() => {
     closeRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    let current = true;
+    setOriginal("");
+    void resolveOriginalPhotoSource(photos[index]).then((source) => {
+      if (current) setOriginal(source);
+    });
+    return () => {
+      current = false;
+    };
+  }, [index, photos]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2805,7 +2910,7 @@ function PhotoLightbox({
           {t("fieldCollection.photoViewer")}
         </DialogTitle>
         <img
-          src={photos[index]}
+          src={original || previews[index]}
           alt={t("fieldCollection.photoNumber", { number: index + 1 })}
           className="h-full w-full select-none object-contain"
           draggable={false}

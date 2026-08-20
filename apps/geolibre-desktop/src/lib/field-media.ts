@@ -1,7 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
 import { setPhotoSourceResolver } from "@geolibre/core";
+import { remoteProjectFileUrl } from "@geolibre/processing";
+import { invoke } from "@tauri-apps/api/core";
 import { isAndroid } from "./is-mobile";
 import { isTauri } from "./is-tauri";
+import type { RemotePhotoQuality } from "./file-names";
 
 export interface NativePhoto {
   uri: string;
@@ -28,19 +30,39 @@ export function openNativePhoto(uri: string): Promise<void> {
 
 const photoCache = new Map<string, Promise<string>>();
 
-export function readNativePhoto(uri: string): Promise<string> {
+export function readNativePhoto(
+  uri: string,
+  quality: RemotePhotoQuality = "original",
+): Promise<string> {
   if (!nativeFieldMediaAvailable()) return Promise.resolve("");
-  let pending = photoCache.get(uri);
+  const key = `${quality}:${uri}`;
+  let pending = photoCache.get(key);
   if (!pending) {
-    pending = invoke<string>("plugin:field-media|read_photo", { uri })
+    pending = invoke<string>("plugin:field-media|read_photo", { uri, quality })
       .catch((error) => {
         console.error("Could not read Field Survey photo", error);
         return "";
       })
-      .finally(() => photoCache.delete(uri));
-    photoCache.set(uri, pending);
+      .finally(() => photoCache.delete(key));
+    photoCache.set(key, pending);
   }
   return pending;
 }
 
-setPhotoSourceResolver(readNativePhoto);
+let remoteProjectPrefix: string | null = null;
+
+export function setRemoteProjectPhotoPrefix(prefix: string | null): void {
+  remoteProjectPrefix = prefix;
+}
+
+setPhotoSourceResolver((source, original) => {
+  if (source.startsWith("content://")) {
+    return readNativePhoto(source, original ? "original" : "optimized");
+  }
+  if (remoteProjectPrefix && source.startsWith("images/")) {
+    return Promise.resolve(
+      remoteProjectFileUrl(`${remoteProjectPrefix}/${source}`, !original),
+    );
+  }
+  return Promise.resolve(source);
+});

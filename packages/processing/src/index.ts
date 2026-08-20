@@ -178,6 +178,7 @@ export {
   setSidecarAuthToken,
   listRemoteProjects,
   readProjectFromRemote,
+  remoteProjectFileUrl,
   saveProjectToRemote,
   clearRemoteWhiteboxCatalogSnapshotCache,
   fetchConversionJob,

@@ -290,6 +290,66 @@ export function emptyFeatureCollection(): FeatureCollection {
   return { type: "FeatureCollection", features: [] };
 }
 
+export interface ImportedCollectionPoints {
+  data: FeatureCollection;
+  skipped: number;
+}
+
+/** Normalize point features from CSV/Shapefile into editable survey observations. */
+export function importCollectionPoints(source: FeatureCollection): ImportedCollectionPoints {
+  const features: Feature<Point>[] = [];
+  const ids = new Set<string>();
+  let skipped = 0;
+
+  for (const feature of source.features) {
+    const coordinates = feature.geometry?.type === "Point" ? feature.geometry.coordinates : null;
+    const longitude = coordinates?.[0];
+    const latitude = coordinates?.[1];
+    if (
+      typeof longitude !== "number" ||
+      typeof latitude !== "number" ||
+      !Number.isFinite(longitude) ||
+      !Number.isFinite(latitude) ||
+      longitude < -180 ||
+      longitude > 180 ||
+      latitude < -90 ||
+      latitude > 90
+    ) {
+      skipped += 1;
+      continue;
+    }
+
+    const properties = { ...(feature.properties ?? {}) } as Record<string, unknown>;
+    const property = (name: string): unknown => {
+      const key = Object.keys(properties).find((candidate) => candidate.toLowerCase() === name);
+      return key ? properties[key] : undefined;
+    };
+    const rawId = property("id") ?? feature.id;
+    const baseId =
+      (typeof rawId === "string" || typeof rawId === "number") && String(rawId).trim()
+        ? String(rawId).trim()
+        : `point-${features.length + 1}`;
+    let id = baseId;
+    for (let suffix = 2; ids.has(id); suffix += 1) id = `${baseId}_${suffix}`;
+    ids.add(id);
+
+    const rawName = property("name");
+    const name =
+      (typeof rawName === "string" || typeof rawName === "number") && String(rawName).trim()
+        ? String(rawName).trim()
+        : id;
+    for (const key of Object.keys(properties)) {
+      if (["id", "name"].includes(key.toLowerCase())) delete properties[key];
+    }
+    properties.id = id;
+    properties.name = name;
+    properties[OBSERVATION_NAME_PROPERTY] = name;
+    features.push({ ...feature, id, geometry: feature.geometry, properties } as Feature<Point>);
+  }
+
+  return { data: { type: "FeatureCollection", features }, skipped };
+}
+
 /** True when a layer is a field-collection target (geojson + tagged metadata). */
 export function isCollectionLayer(layer: CollectionLayerLike): boolean {
   return (

@@ -35,6 +35,7 @@ class PickPhotosArgs {
 @InvokeArg
 class ReadPhotoArgs {
     lateinit var uri: String
+    var quality: String = "original"
 }
 
 private data class PendingPhoto(val uri: Uri, val name: String, val mimeType: String)
@@ -182,20 +183,31 @@ class FieldMediaPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun readPhoto(invoke: Invoke) {
         try {
-            val uri = Uri.parse(invoke.parseArgs(ReadPhotoArgs::class.java).uri)
+            val args = invoke.parseArgs(ReadPhotoArgs::class.java)
+            val uri = Uri.parse(args.uri)
             requireOwnedPhoto(uri)
-            val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                activity.contentResolver.loadThumbnail(uri, Size(2560, 2560), null)
+            val sourceMime = activity.contentResolver.getType(uri) ?: "image/jpeg"
+            val portableOriginal = sourceMime in setOf(
+                "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"
+            )
+            val (mimeType, bytes) = if (args.quality == "original" && portableOriginal) {
+                sourceMime to requireNotNull(activity.contentResolver.openInputStream(uri)) {
+                    "Photo is unavailable"
+                }.use { it.readBytes() }
             } else {
-                error("Android 10 or newer is required")
-            }
-            val bytes = ByteArrayOutputStream().use { output ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 92, output)
-                bitmap.recycle()
-                output.toByteArray()
+                val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    activity.contentResolver.loadThumbnail(uri, Size(2560, 2560), null)
+                } else {
+                    error("Android 10 or newer is required")
+                }
+                "image/jpeg" to ByteArrayOutputStream().use { output ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 92, output)
+                    bitmap.recycle()
+                    output.toByteArray()
+                }
             }
             val response = JSObject()
-            response.put("dataUrl", "data:image/jpeg;base64,${Base64.encodeToString(bytes, Base64.NO_WRAP)}")
+            response.put("dataUrl", "data:$mimeType;base64,${Base64.encodeToString(bytes, Base64.NO_WRAP)}")
             invoke.resolve(response)
         } catch (error: Exception) {
             invoke.reject(error.message ?: "Could not read photo")
