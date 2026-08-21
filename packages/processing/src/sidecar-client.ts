@@ -310,9 +310,14 @@ export function remoteProjectFileUrl(
 
 export async function readProjectFromRemote(
   fileName: string,
-  baseUrl = DEFAULT_SIDECAR_URL,
-): Promise<Uint8Array> {
-  const url = remoteProjectStorageUrl(fileName, "read", baseUrl);
+  options: { baseUrl?: string; thumbnail?: boolean } = {},
+): Promise<Uint8Array<ArrayBuffer>> {
+  const url = remoteProjectStorageUrl(
+    fileName,
+    "read",
+    options.baseUrl ?? DEFAULT_SIDECAR_URL,
+  );
+  if (options.thumbnail) url.searchParams.set("thumbnail", "1");
   let response: Response;
   try {
     response = await sidecarFetch(url.toString());

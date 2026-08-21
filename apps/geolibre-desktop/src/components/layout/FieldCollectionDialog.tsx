@@ -61,6 +61,7 @@ import {
   buildGeometryFeature,
   buildPropertiesWithForm,
   buildSchema,
+  collectionAttachmentKeys,
   collectionAttachments,
   COLLECTION_ATTACHMENT_KEYS_KEY,
   collectionMetadata,
@@ -75,6 +76,7 @@ import {
   getSchema,
   type GeometryType,
   importCollectionPoints,
+  type ImportedCollectionPoints,
   isCollectionLayer,
   MAX_NOTE_LENGTH,
   MAX_NOTES_PER_FEATURE,
@@ -95,6 +97,7 @@ import {
 import { attributeFormErrorMessage } from "../../lib/attribute-form-messages";
 import { getCurrentPosition } from "../../lib/geolocation";
 import {
+  isPhotoFileName,
   readPhotoDirection,
   setObservationPhotoSink,
   type ObservationPhotoBatch,
@@ -118,7 +121,14 @@ import {
 } from "../../lib/photo-bearing";
 import { releaseBodyPointerEvents } from "../../lib/radix-compat";
 import { isCurrentCameraTask, readFieldPhoto } from "../../lib/field-photo";
-import { openVectorFileWithFallback } from "../../lib/tauri-io";
+import { imageMimeFromName } from "../../lib/kml-overlays";
+import {
+  isAbsoluteLocalPath,
+  isHttpUrl,
+  isTauri,
+  openVectorFileWithFallback,
+  readSurveyPhotoBytes,
+} from "../../lib/tauri-io";
 
 interface FieldCollectionDialogProps {
   open: boolean;
@@ -137,6 +147,68 @@ const DRAW_COLOR = "#ef4444";
 const HISTORY_POINT_MARKER_KEY = "fieldCollectionHistoryMarkerV2";
 const OBSERVATION_LABELS_KEY = "fieldCollectionObservationLabels";
 const HISTORY_POINT_MARKER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="param(fill)" stroke="white" stroke-width="4"/><path fill="white" d="M23 17h18v30l-9-7-9 7z"/></svg>`;
+
+async function attachImportedPhotos(
+  imported: ImportedCollectionPoints,
+  csvPath: string,
+  attachmentKeys: ReturnType<typeof collectionAttachmentKeys>,
+): Promise<{ loaded: number; skipped: number }> {
+  let loaded = 0;
+  let skipped = 0;
+
+  for (const [index, group] of imported.photoGroups.entries()) {
+    const photos: string[] = [];
+    const names: string[] = [];
+    const bearings: (number | null)[] = [];
+    let totalBytes = 0;
+    for (const source of group) {
+      if (photos.length >= MAX_PHOTOS_PER_FEATURE || !isPhotoFileName(source.name)) {
+        skipped += 1;
+        continue;
+      }
+      if (isHttpUrl(source.path)) {
+        photos.push(source.path.trim());
+        names.push(source.name);
+        bearings.push(null);
+        loaded += 1;
+        continue;
+      }
+      if (!isTauri() || !isAbsoluteLocalPath(source.path)) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        const bytes = await readSurveyPhotoBytes(csvPath, source.path);
+        const file = new File([bytes], source.name, { type: imageMimeFromName(source.name) });
+        const [photo, bearing] = await Promise.all([
+          readFieldPhoto(file),
+          readPhotoDirection(file),
+        ]);
+        if (!photo.dataUrl || totalBytes + photo.dataUrl.length > MAX_TOTAL_PHOTO_BYTES) {
+          skipped += 1;
+          continue;
+        }
+        totalBytes += photo.dataUrl.length;
+        photos.push(photo.dataUrl);
+        names.push(source.name);
+        bearings.push(bearing);
+        loaded += 1;
+      } catch (error) {
+        console.warn(`Could not import survey photo "${source.path}".`, error);
+        skipped += 1;
+      }
+    }
+    const feature = imported.data.features[index];
+    if (!feature || photos.length === 0) continue;
+    const properties = { ...(feature.properties ?? {}) } as Record<string, unknown>;
+    feature.properties = {
+      ...properties,
+      ...collectionAttachments(photos, [], Object.keys(properties), attachmentKeys, bearings, names),
+    };
+  }
+  return { loaded, skipped };
+}
+
 const FIELD_MARKER_SHAPES = [
   "circle",
   "square",
@@ -1360,16 +1432,29 @@ export function FieldCollectionDialog({
           { key: "name", label: t("fieldCollection.importName"), type: "text" },
         ],
       };
+      const photoResult = await attachImportedPhotos(
+        imported,
+        result.path,
+        collectionAttachmentKeys(importSchema.fields.map((field) => field.key)),
+      );
       const id = createCollectionLayer(name, importSchema, "point", imported.data);
       setLayerId(id);
       const saved = await persistProject();
+      const isPhotoClusterCsv = imported.photoGroups.some((group) => group.length > 0);
       setNotice(
-        saved
-          ? t("fieldCollection.importedPoints", {
-              count: imported.data.features.length,
-              skipped: imported.skipped,
-            })
-          : t("fieldCollection.saveFailed"),
+        !saved
+          ? t("fieldCollection.saveFailed")
+          : isPhotoClusterCsv
+            ? t("fieldCollection.importedPhotoClusters", {
+                count: imported.data.features.length,
+                photos: photoResult.loaded,
+                skipped: imported.skipped,
+                photoSkipped: photoResult.skipped,
+              })
+            : t("fieldCollection.importedPoints", {
+                count: imported.data.features.length,
+                skipped: imported.skipped,
+              }),
       );
       const layer = useAppStore.getState().layers.find((item) => item.id === id);
       if (layer) mapControllerRef.current?.fitLayer(layer);

@@ -10,6 +10,7 @@ import {
 import {
   createMapController,
   geolocateControlFactory,
+  mapRequestCacheMode,
   MapController,
   proxyMapRequestUrl,
 } from "../packages/map/src/map-controller";
@@ -295,6 +296,29 @@ const heatmapId = (id: string) => `layer-${id}-heatmap`;
 const markerId = (id: string) => `layer-${id}-marker`;
 const rasterId = (id: string) => `layer-${id}-raster`;
 const srcId = (id: string) => `source-${id}`;
+
+describe("mapRequestCacheMode", () => {
+  it("pins basemap resources but refetches mutable styles", () => {
+    assert.equal(
+      mapRequestCacheMode("https://tiles.openfreemap.org/planet/1/2/3.pbf"),
+      "force-cache",
+    );
+    assert.equal(
+      mapRequestCacheMode("https://basemaps.cartocdn.com/light/1/2/3.png"),
+      "force-cache",
+    );
+    assert.equal(
+      mapRequestCacheMode("https://mt1.google.com/vt/lyrs=y&x=1&y=2&z=3"),
+      "force-cache",
+    );
+    assert.equal(
+      mapRequestCacheMode("https://tile.googleapis.com/v1/2dtiles/3/1/2?session=x"),
+      "force-cache",
+    );
+    assert.equal(mapRequestCacheMode("https://tiles.openfreemap.org/styles/liberty"), "no-store");
+    assert.equal(mapRequestCacheMode("https://example.com/1/2/3.png"), undefined);
+  });
+});
 
 describe("proxyMapRequestUrl", () => {
   const env = {
@@ -816,6 +840,42 @@ describe("MapController basemap controls", () => {
     );
     assert.ok(hidden);
     assert.equal(hidden.args[2], "none");
+  });
+
+  it("suspends style and lower basemaps beneath an opaque raster basemap", () => {
+    const { map, fake } = makeFakeMap();
+    const controller = controllerWith(map);
+    const basemap = (id: string, basemapOpaque: boolean) =>
+      rasterLayer(id, {
+        metadata: {
+          basemapOpaque,
+          externalNativeLayer: true,
+          nativeLayerIds: [id],
+          sourceKind: "maplibre-basemap-control",
+        },
+      });
+    const lower = basemap("google-satellite", true);
+    const upper = basemap("osm-standard", true);
+
+    controller.syncLayers([lower, upper]);
+    assert.equal(
+      (fake.layers.get("basemap-bg")?.layout as Record<string, unknown>)?.visibility,
+      "none",
+    );
+    assert.equal(
+      (fake.layers.get("google-satellite")?.layout as Record<string, unknown>)?.visibility,
+      "none",
+    );
+
+    controller.syncLayers([lower, { ...upper, opacity: 0.5 }]);
+    assert.equal(
+      (fake.layers.get("basemap-bg")?.layout as Record<string, unknown>)?.visibility,
+      "none",
+    );
+    assert.equal(
+      (fake.layers.get("google-satellite")?.layout as Record<string, unknown>)?.visibility,
+      "visible",
+    );
   });
 
   it("excludes user style layers from the basemap layer set", () => {

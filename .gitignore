@@ -86,3 +86,5 @@ apps/geolibre-desktop/src-tauri/mas/embedded.provisionprofile
 # (the obvious place) drops the file here.
 /geolibre-server-api.db
 # tests
+
+examples

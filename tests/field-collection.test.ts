@@ -48,11 +48,11 @@ import {
 } from "../apps/geolibre-desktop/src/lib/field-collection";
 
 describe("observationLabelStyle", () => {
-  it("shows every observation name above its point", () => {
+  it("declutters observation names above their points", () => {
     const labels = observationLabelStyle(DEFAULT_LAYER_STYLE.labels);
     assert.equal(labels.enabled, true);
     assert.equal(labels.field, OBSERVATION_NAME_PROPERTY);
-    assert.equal(labels.allowOverlap, true);
+    assert.equal(labels.allowOverlap, false);
     assert.equal(labels.anchor, "bottom");
     assert.equal(labels.offsetY, -1.8);
   });
@@ -378,7 +378,11 @@ describe("collection layer helpers", () => {
         geojson: {
           type: "FeatureCollection" as const,
           features: [
-            makePointFeature(0, 0, collectionAttachments(["one", "two"], [], [], keys)),
+            makePointFeature(
+              0,
+              0,
+              collectionAttachments(["one", "two"], [], [], keys)
+            ),
             makePointFeature(1, 1, {}),
           ],
         },
@@ -660,6 +664,38 @@ describe("importCollectionPoints", () => {
       name: "河口",
       [OBSERVATION_NAME_PROPERTY]: "河口",
     });
+  });
+
+  it("groups photo_gps.py CSV rows and keeps their photo files", () => {
+    const row = (filename: string, path: string) =>
+      makePointFeature(110.928, 32.457, {
+        filename,
+        path,
+        longitude: "110.928",
+        latitude: "32.457",
+        altitude_m: "0",
+        cluster_id: "2",
+        cluster_lon: "110.9283634",
+        cluster_lat: "32.4576034",
+        status: "ok",
+      });
+    const imported = importCollectionPoints({
+      type: "FeatureCollection",
+      features: [row("a.jpg", "/photos/a.jpg"), row("b.jpg", "/photos/b.jpg")],
+    });
+
+    assert.equal(imported.data.features.length, 1);
+    assert.equal(imported.data.features[0].id, "2");
+    assert.deepEqual(imported.data.features[0].geometry, {
+      type: "Point",
+      coordinates: [110.9283634, 32.4576034],
+    });
+    assert.deepEqual(imported.photoGroups, [
+      [
+        { name: "a.jpg", path: "/photos/a.jpg" },
+        { name: "b.jpg", path: "/photos/b.jpg" },
+      ],
+    ]);
   });
 });
 

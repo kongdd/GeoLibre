@@ -572,6 +572,16 @@ export async function readLocalFileBytes(path: string): Promise<Uint8Array<Array
   }
 }
 
+/** Read a photo referenced by a survey CSV, confined to the CSV directory tree. */
+export async function readSurveyPhotoBytes(
+  csvPath: string,
+  path: string,
+): Promise<Uint8Array<ArrayBuffer>> {
+  if (!isTauri()) throw new Error("Survey photo paths require the desktop app.");
+  const buffer = await invoke<ArrayBuffer>("read_survey_photo", { csvPath, path });
+  return new Uint8Array(buffer);
+}
+
 /**
  * Text counterpart to {@link readLocalFileBytes}: read a local file as UTF-8,
  * falling back to the `read_local_file` Tauri command when the `fs` plugin

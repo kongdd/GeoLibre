@@ -501,6 +501,17 @@ function handleBasemapRemove(app: GeoLibreAppAPI, event: BasemapControlEventPayl
   registeredRasterLayers.delete(event.basemap.id);
 }
 
+/** Whether a raster covers the map rather than adding labels, traffic, or rail overlays. */
+export function isOpaqueRasterBasemap(basemap: BasemapDefinition): boolean {
+  return (
+    basemap.source.type === "raster" &&
+    basemap.source.googleSession?.overlay !== true &&
+    basemap.category !== "Labels" &&
+    basemap.category !== "Traffic" &&
+    basemap.provider !== "openrailwaymap"
+  );
+}
+
 function registerRasterBasemap(
   app: GeoLibreAppAPI,
   basemap: BasemapDefinition,
@@ -541,6 +552,7 @@ function registerRasterBasemap(
     beforeId: managedRaster.beforeId,
     metadata: {
       basemapId: basemap.id,
+      basemapOpaque: isOpaqueRasterBasemap(basemap),
       basemapProvider: basemap.provider,
       category: basemap.category,
       externalNativeLayer: true,

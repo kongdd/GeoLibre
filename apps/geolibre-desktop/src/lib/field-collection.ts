@@ -84,7 +84,7 @@ export function observationLabelStyle(labels: LabelStyle): LabelStyle {
     ...labels,
     enabled: true,
     field: OBSERVATION_NAME_PROPERTY,
-    allowOverlap: true,
+    allowOverlap: false,
     anchor: "bottom",
     offsetY: -1.8,
   };
@@ -290,52 +290,169 @@ export function emptyFeatureCollection(): FeatureCollection {
   return { type: "FeatureCollection", features: [] };
 }
 
+export interface ImportedCollectionPhoto {
+  path: string;
+  name: string;
+}
+
 export interface ImportedCollectionPoints {
   data: FeatureCollection;
   skipped: number;
+  /** Local photo files aligned with imported features; populated for photo-cluster CSVs. */
+  photoGroups: ImportedCollectionPhoto[][];
+}
+
+function propertyValue(
+  properties: Record<string, unknown>,
+  name: string
+): unknown {
+  const key = Object.keys(properties).find(
+    (candidate) => candidate.toLowerCase() === name
+  );
+  return key ? properties[key] : undefined;
+}
+
+function validCoordinate(
+  longitude: unknown,
+  latitude: unknown
+): longitude is number {
+  return (
+    typeof longitude === "number" &&
+    typeof latitude === "number" &&
+    Number.isFinite(longitude) &&
+    Number.isFinite(latitude) &&
+    longitude >= -180 &&
+    longitude <= 180 &&
+    latitude >= -90 &&
+    latitude <= 90
+  );
+}
+
+/** Group the photo_gps.py CSV format into one observation per cluster. */
+function importPhotoClusters(
+  source: FeatureCollection
+): ImportedCollectionPoints | null {
+  const sample = source.features.find(
+    (feature) => feature.properties
+  )?.properties;
+  if (!sample) return null;
+  const keys = Object.keys(sample).map((key) => key.toLowerCase());
+  if (
+    !["filename", "path", "cluster_id", "cluster_lon", "cluster_lat"].every(
+      (key) => keys.includes(key)
+    )
+  ) {
+    return null;
+  }
+
+  const groups = new Map<
+    string,
+    { feature: Feature<Point>; photos: ImportedCollectionPhoto[] }
+  >();
+  let skipped = 0;
+  for (const feature of source.features) {
+    const properties = { ...(feature.properties ?? {}) } as Record<
+      string,
+      unknown
+    >;
+    const id = String(propertyValue(properties, "cluster_id") ?? "").trim();
+    const longitude = Number(propertyValue(properties, "cluster_lon"));
+    const latitude = Number(propertyValue(properties, "cluster_lat"));
+    if (!id || !validCoordinate(longitude, latitude)) {
+      skipped += 1;
+      continue;
+    }
+
+    let group = groups.get(id);
+    if (!group) {
+      for (const key of Object.keys(properties)) {
+        if (
+          [
+            "filename",
+            "path",
+            "longitude",
+            "latitude",
+            "altitude_m",
+            "id",
+            "name",
+          ].includes(key.toLowerCase())
+        ) {
+          delete properties[key];
+        }
+      }
+      properties.id = id;
+      properties.name = id;
+      properties[OBSERVATION_NAME_PROPERTY] = id;
+      group = {
+        feature: {
+          type: "Feature",
+          id,
+          geometry: { type: "Point", coordinates: [longitude, latitude] },
+          properties,
+        },
+        photos: [],
+      };
+      groups.set(id, group);
+    }
+    const path = String(
+      propertyValue(feature.properties ?? {}, "path") ?? ""
+    ).trim();
+    const name = String(
+      propertyValue(feature.properties ?? {}, "filename") ?? ""
+    ).trim();
+    if (path && name) group.photos.push({ path, name });
+  }
+
+  const grouped = [...groups.values()];
+  return {
+    data: {
+      type: "FeatureCollection",
+      features: grouped.map(({ feature }) => feature),
+    },
+    skipped,
+    photoGroups: grouped.map(({ photos }) => photos),
+  };
 }
 
 /** Normalize point features from CSV/Shapefile into editable survey observations. */
-export function importCollectionPoints(source: FeatureCollection): ImportedCollectionPoints {
+export function importCollectionPoints(
+  source: FeatureCollection
+): ImportedCollectionPoints {
+  const photoClusters = importPhotoClusters(source);
+  if (photoClusters) return photoClusters;
+
   const features: Feature<Point>[] = [];
   const ids = new Set<string>();
   let skipped = 0;
 
   for (const feature of source.features) {
-    const coordinates = feature.geometry?.type === "Point" ? feature.geometry.coordinates : null;
+    const coordinates =
+      feature.geometry?.type === "Point" ? feature.geometry.coordinates : null;
     const longitude = coordinates?.[0];
     const latitude = coordinates?.[1];
-    if (
-      typeof longitude !== "number" ||
-      typeof latitude !== "number" ||
-      !Number.isFinite(longitude) ||
-      !Number.isFinite(latitude) ||
-      longitude < -180 ||
-      longitude > 180 ||
-      latitude < -90 ||
-      latitude > 90
-    ) {
+    if (!validCoordinate(longitude, latitude)) {
       skipped += 1;
       continue;
     }
 
-    const properties = { ...(feature.properties ?? {}) } as Record<string, unknown>;
-    const property = (name: string): unknown => {
-      const key = Object.keys(properties).find((candidate) => candidate.toLowerCase() === name);
-      return key ? properties[key] : undefined;
-    };
-    const rawId = property("id") ?? feature.id;
+    const properties = { ...(feature.properties ?? {}) } as Record<
+      string,
+      unknown
+    >;
+    const rawId = propertyValue(properties, "id") ?? feature.id;
     const baseId =
-      (typeof rawId === "string" || typeof rawId === "number") && String(rawId).trim()
+      (typeof rawId === "string" || typeof rawId === "number") &&
+      String(rawId).trim()
         ? String(rawId).trim()
         : `point-${features.length + 1}`;
     let id = baseId;
     for (let suffix = 2; ids.has(id); suffix += 1) id = `${baseId}_${suffix}`;
     ids.add(id);
 
-    const rawName = property("name");
+    const rawName = propertyValue(properties, "name");
     const name =
-      (typeof rawName === "string" || typeof rawName === "number") && String(rawName).trim()
+      (typeof rawName === "string" || typeof rawName === "number") &&
+      String(rawName).trim()
         ? String(rawName).trim()
         : id;
     for (const key of Object.keys(properties)) {
@@ -344,10 +461,19 @@ export function importCollectionPoints(source: FeatureCollection): ImportedColle
     properties.id = id;
     properties.name = name;
     properties[OBSERVATION_NAME_PROPERTY] = name;
-    features.push({ ...feature, id, geometry: feature.geometry, properties } as Feature<Point>);
+    features.push({
+      ...feature,
+      id,
+      geometry: feature.geometry,
+      properties,
+    } as Feature<Point>);
   }
 
-  return { data: { type: "FeatureCollection", features }, skipped };
+  return {
+    data: { type: "FeatureCollection", features },
+    skipped,
+    photoGroups: features.map(() => []),
+  };
 }
 
 /** True when a layer is a field-collection target (geojson + tagged metadata). */

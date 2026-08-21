@@ -1,5 +1,5 @@
 import { setPhotoSourceResolver } from "@geolibre/core";
-import { remoteProjectFileUrl } from "@geolibre/processing";
+import { readProjectFromRemote } from "@geolibre/processing";
 import { invoke } from "@tauri-apps/api/core";
 import { isAndroid } from "./is-mobile";
 import { isTauri } from "./is-tauri";
@@ -40,6 +40,16 @@ export function readNativePhoto(
   if (!pending) {
     pending = invoke<string>("plugin:field-media|read_photo", { uri, quality })
       .catch((error) => {
+        if (quality === "optimized") {
+          console.warn("Could not create Field Survey thumbnail; loading original", error);
+          return invoke<string>("plugin:field-media|read_photo", {
+            uri,
+            quality: "original",
+          });
+        }
+        throw error;
+      })
+      .catch((error) => {
         console.error("Could not read Field Survey photo", error);
         return "";
       })
@@ -50,9 +60,32 @@ export function readNativePhoto(
 }
 
 let remoteProjectPrefix: string | null = null;
+const remotePhotoCache = new Map<string, Promise<string>>();
 
 export function setRemoteProjectPhotoPrefix(prefix: string | null): void {
+  if (prefix === remoteProjectPrefix) return;
+  for (const pending of remotePhotoCache.values()) {
+    void pending.then((url) => URL.revokeObjectURL(url));
+  }
+  remotePhotoCache.clear();
   remoteProjectPrefix = prefix;
+}
+
+function readRemotePhoto(source: string, original: boolean): Promise<string> {
+  const path = `${remoteProjectPrefix}/${source}`;
+  const key = `${original}:${path}`;
+  let pending = remotePhotoCache.get(key);
+  if (!pending) {
+    pending = readProjectFromRemote(path, { thumbnail: !original })
+      .then((bytes) => URL.createObjectURL(new Blob([bytes])))
+      .catch((error) => {
+        remotePhotoCache.delete(key);
+        console.error("Could not read remote Field Survey photo", error);
+        return "";
+      });
+    remotePhotoCache.set(key, pending);
+  }
+  return pending;
 }
 
 setPhotoSourceResolver((source, original) => {
@@ -60,9 +93,7 @@ setPhotoSourceResolver((source, original) => {
     return readNativePhoto(source, original ? "original" : "optimized");
   }
   if (remoteProjectPrefix && source.startsWith("images/")) {
-    return Promise.resolve(
-      remoteProjectFileUrl(`${remoteProjectPrefix}/${source}`, !original),
-    );
+    return readRemotePhoto(source, original);
   }
   return Promise.resolve(source);
 });

@@ -45,6 +45,14 @@ describe("project images", () => {
     assert.match(JSON.parse(packed.content).photo, /^images\/[0-9a-f]{8}\.png$/);
   });
 
+  it("keeps remote image references without copying them", () => {
+    const photo = "https://example.com/photo.jpg";
+    const packed = externalizeProjectImages(JSON.stringify({ photo }));
+
+    assert.equal(JSON.parse(packed.content).photo, photo);
+    assert.equal(packed.files.length, 0);
+  });
+
   it("reuses one file for duplicate photos and leaves svg inline", () => {
     const svg = "data:image/svg+xml;base64,PHN2Zy8+";
     const packed = externalizeProjectImages(

@@ -85,6 +85,40 @@ const DEFAULT_PROJECTION: maplibregl.ProjectionSpecification = {
 };
 const DEFAULT_MAX_PITCH = 85;
 
+export function mapRequestCacheMode(url: string): RequestCache | undefined {
+  if (url.startsWith("https://tiles.openfreemap.org/styles/")) return "no-store";
+  try {
+    return /(?:^|\.)(?:openfreemap\.org|cartocdn\.com|mt1\.google\.com|tile\.googleapis\.com)$/.test(
+      new URL(url).hostname,
+    )
+      ? "force-cache"
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether a visible, opaque raster basemap fully covers the style below. */
+function occludesStyleBasemap(layer: GeoLibreLayer): boolean {
+  if (
+    layer.type !== "raster" ||
+    !layer.visible ||
+    layer.opacity < 1 ||
+    layer.metadata.sourceKind !== "maplibre-basemap-control"
+  ) {
+    return false;
+  }
+  if (typeof layer.metadata.basemapOpaque === "boolean") {
+    return layer.metadata.basemapOpaque;
+  }
+  // Legacy projects predate basemapOpaque; infer the known transparent groups.
+  return (
+    layer.metadata.category !== "Labels" &&
+    layer.metadata.category !== "Traffic" &&
+    layer.metadata.basemapProvider !== "openrailwaymap"
+  );
+}
+
 export function proxyMapRequestUrl(
   url: string,
   env: Record<string, string | undefined> = getRuntimeEnvironment(),
@@ -573,14 +607,16 @@ export class MapController {
     this.map = new maplibregl.Map({
       container,
       style: deferMapboxStyle ? createBlankMapStyle() : resolveMapStyle(this.basemapStyleUrl),
-      transformRequest: (url) => ({
-        url: proxyMapRequestUrl(url),
-        // A previously truncated proxied style must not strand the map behind
-        // the WebView's HTTP cache after the server has recovered.
-        ...(url.startsWith("https://tiles.openfreemap.org/styles/")
-          ? { cache: "no-store" as const }
-          : {}),
-      }),
+      transformRequest: (url) => {
+        const cache = mapRequestCacheMode(url);
+        return {
+          url: proxyMapRequestUrl(url),
+          // Keep immutable basemap tiles in the WebView's persistent HTTP cache,
+          // but always refetch styles so a previously truncated response cannot
+          // strand the map after the server recovers.
+          ...(cache ? { cache } : {}),
+        };
+      },
       center: view?.center ?? [-100, 40],
       zoom: view?.zoom ?? 2,
       bearing: view?.bearing ?? 0,
@@ -1271,8 +1307,17 @@ export class MapController {
     // converge, but a map-only embed (`?maponly`) has no panels to trigger one,
     // so the wrong stack is what the viewer keeps looking at. See
     // opengeos/GeoLibre#1404.
+    let opaqueBasemapAbove = false;
     for (let index = layers.length - 1; index >= 0; index -= 1) {
-      syncLayer(map, layers[index], this.getBeforeStyleLayerId(layers, index));
+      const layer = layers[index];
+      const coveredBasemap =
+        opaqueBasemapAbove && layer.metadata.sourceKind === "maplibre-basemap-control";
+      syncLayer(
+        map,
+        coveredBasemap ? { ...layer, visible: false } : layer,
+        this.getBeforeStyleLayerId(layers, index),
+      );
+      if (occludesStyleBasemap(layer)) opaqueBasemapAbove = true;
     }
     this.layerIds = nextIds;
     this.syncedLayers = layers;
@@ -1321,7 +1366,11 @@ export class MapController {
   private applyBasemapVisibility(): void {
     if (!this.isStyleReady() || !this.map) return;
     const map = this.map;
-    const visibility = this.basemapVisible ? "visible" : "none";
+    // Do not keep downloading and drawing the style hidden beneath an opaque
+    // raster basemap. Restore it automatically when that raster is hidden,
+    // removed, or made translucent; label/traffic/rail overlays stay transparent.
+    const occluded = this.syncedLayers.some(occludesStyleBasemap);
+    const visibility = this.basemapVisible && !occluded ? "visible" : "none";
 
     for (const layer of this.getBasemapStyleLayers()) {
       try {

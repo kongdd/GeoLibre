@@ -329,6 +329,7 @@ pub fn run() {
             allow_raster_asset,
             read_local_file,
             read_project_file,
+            read_survey_photo,
             read_shapefile_siblings,
             resolve_url_redirect,
             read_mbtiles_metadata,
@@ -418,6 +419,9 @@ fn read_project_file(path: String) -> Result<String, String> {
 /// in step.
 // SYNC: VECTOR_FILE_DIALOG_EXTENSIONS in src/lib/tauri-io.ts — grep "SYNC:" to
 // find the partner list and update both together.
+const SURVEY_PHOTO_EXTENSIONS: [&str; 8] =
+    ["jpg", "jpeg", "png", "tif", "tiff", "webp", "heic", "heif"];
+
 const RESTORABLE_VECTOR_EXTENSIONS: [&str; 17] = [
     "geojson",
     "json",
@@ -495,6 +499,47 @@ fn read_local_file(path: String) -> Result<tauri::ipc::Response, String> {
     fs::read(&path)
         .map(tauri::ipc::Response::new)
         .map_err(|error| format!("Could not read local file: {error}"))
+}
+
+pub(crate) fn is_allowed_survey_photo_path(csv_path: &str, photo_path: &str) -> bool {
+    if !is_safe_absolute_path(csv_path) || !is_safe_absolute_path(photo_path) {
+        return false;
+    }
+    let csv = csv_path.to_ascii_lowercase();
+    let photo = photo_path.to_ascii_lowercase();
+    let Some(root) = Path::new(csv_path)
+        .parent()
+        .filter(|root| root.parent().is_some())
+    else {
+        return false;
+    };
+    let csv_allowed = csv.ends_with(".csv") || csv.ends_with(".tsv");
+    let photo_allowed = photo
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| SURVEY_PHOTO_EXTENSIONS.contains(&extension));
+    csv_allowed && photo_allowed && Path::new(photo_path).starts_with(root)
+}
+
+/// Read a photo referenced by a selected survey CSV, confined to its directory tree.
+#[tauri::command]
+fn read_survey_photo(csv_path: String, path: String) -> Result<tauri::ipc::Response, String> {
+    if !is_allowed_survey_photo_path(&csv_path, &path) {
+        return Err(format!(
+            "Refusing to read \"{path}\": not a survey photo below the CSV directory"
+        ));
+    }
+    let csv = fs::canonicalize(&csv_path)
+        .map_err(|error| format!("Could not resolve survey CSV: {error}"))?;
+    let photo = fs::canonicalize(&path)
+        .map_err(|error| format!("Could not resolve survey photo: {error}"))?;
+    if !photo.starts_with(csv.parent().unwrap_or(Path::new(""))) {
+        return Err(format!(
+            "Refusing to read \"{path}\": path leaves the CSV directory"
+        ));
+    }
+    fs::read(photo)
+        .map(tauri::ipc::Response::new)
+        .map_err(|error| format!("Could not read survey photo: {error}"))
 }
 
 /// Add one GeoTIFF to the asset-protocol scope. The filesystem and asset scopes
@@ -4067,9 +4112,10 @@ fn configure_linux_webkit() {}
 mod tests {
     use super::{
         client_cert_is_pkcs12, client_cert_password_without_path, ensure_fetchable_url,
-        is_allowed_local_vector_path, is_allowed_project_path, is_disallowed_ip,
-        is_safe_absolute_path, is_ssrf_guard_error, path_is_under, resolve_fetch_timeout_secs,
-        tcp_table_port, MAX_FETCH_TIMEOUT_SECS, REMOTE_TILE_TIMEOUT_SECS, SSRF_BLOCKED_MESSAGE,
+        is_allowed_local_vector_path, is_allowed_project_path, is_allowed_survey_photo_path,
+        is_disallowed_ip, is_safe_absolute_path, is_ssrf_guard_error, path_is_under,
+        resolve_fetch_timeout_secs, tcp_table_port, MAX_FETCH_TIMEOUT_SECS,
+        REMOTE_TILE_TIMEOUT_SECS, SSRF_BLOCKED_MESSAGE,
     };
     #[cfg(target_os = "linux")]
     use super::{linux_uses_nvidia_renderer, nvidia_is_primary_gpu};
@@ -4385,6 +4431,26 @@ mod tests {
         assert!(is_allowed_local_vector_path("C:/data/roads.gpkg"));
         // Case-insensitive extension; a ".." inside the filename is fine.
         assert!(is_allowed_local_vector_path("/data/v1..2.SHP"));
+    }
+
+    #[test]
+    fn confines_survey_photos_to_the_csv_directory() {
+        assert!(is_allowed_survey_photo_path(
+            "/data/survey/locations.csv",
+            "/data/survey/photos/site.JPG"
+        ));
+        assert!(!is_allowed_survey_photo_path(
+            "/data/survey/locations.csv",
+            "/data/other/site.jpg"
+        ));
+        assert!(!is_allowed_survey_photo_path(
+            "/data/survey/locations.csv",
+            "/data/survey/secret.json"
+        ));
+        assert!(!is_allowed_survey_photo_path(
+            "/data/survey/locations.csv",
+            "/data/survey/../private/site.jpg"
+        ));
     }
 
     #[test]
