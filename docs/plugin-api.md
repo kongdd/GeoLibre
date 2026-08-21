@@ -186,6 +186,7 @@ export interface GeoLibreToolbarMenu {
   id: string;
   label: string;
   icon?: string; // URL or data: URI
+  mobileVisible?: boolean; // keep visible below the desktop breakpoint
   items: GeoLibreToolbarMenuItem[];
 }
 
@@ -367,6 +368,7 @@ change. If you also touched pages under `docs/`, build the site — CI runs
 | `carto-light`                 | CARTO Positron GL style                                                                                             |
 | `maplibre-gl-basemap-control` | Adds a MapLibre basemap picker                                                                                      |
 | `maplibre-gl-components`      | Adds the MapLibre Components control grid and panels for FlatGeobuf, COG, PMTiles, Zarr, LiDAR, and Gaussian splats |
+| `geolibre-field-survey`       | Adds the Field Survey toolbar menu for field observations and GPS tracking |
 | `maplibre-gl-geo-editor`      | Adds GeoEditor drawing controls                                                                                     |
 | `maplibre-gl-geoagent`        | Adds GeoAgent map assistant controls                                                                                |
 | `maplibre-gl-lidar`           | Adds LiDAR controls                                                                                                 |
@@ -839,6 +841,8 @@ const unregister = app.registerToolbarMenu?.({
 ```
 
 Each item is an **action** (`onSelect`, the default when `type` is omitted), a **submenu** (nested `items`), or a **separator**. Items typically open a right panel or a floating panel, but `onSelect` can run anything. Re-registering the same `id` replaces the menu, so you can rebuild it as your plugin's state changes.
+
+Plugin menus are secondary toolbar actions and are hidden below the desktop breakpoint by default. Set `mobileVisible: true` only for a mobile-first workflow whose menu has no other reachable mobile entry point, such as Field Survey.
 
 Menus from **external plugins** (loaded from a zip, a manifest URL, or a bundled drop-in) render at the end of the banner, after the Help menu, so third-party menus sit together past the built-in menus. Menus from built-in plugins render beside the built-in menus. The host decides placement from the menu's owning plugin, so you do not need to do anything special.
 

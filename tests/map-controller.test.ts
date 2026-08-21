@@ -10,7 +10,9 @@ import {
 import {
   createMapController,
   geolocateControlFactory,
+  mapRequestCacheMode,
   MapController,
+  proxyMapRequestUrl,
 } from "../packages/map/src/map-controller";
 
 // Internal shape of MapController we reach into to inject a fake map. The
@@ -294,6 +296,55 @@ const heatmapId = (id: string) => `layer-${id}-heatmap`;
 const markerId = (id: string) => `layer-${id}-marker`;
 const rasterId = (id: string) => `layer-${id}-raster`;
 const srcId = (id: string) => `source-${id}`;
+
+describe("mapRequestCacheMode", () => {
+  it("pins basemap resources but refetches mutable styles", () => {
+    assert.equal(
+      mapRequestCacheMode("https://tiles.openfreemap.org/planet/1/2/3.pbf"),
+      "force-cache",
+    );
+    assert.equal(
+      mapRequestCacheMode("https://basemaps.cartocdn.com/light/1/2/3.png"),
+      "force-cache",
+    );
+    assert.equal(
+      mapRequestCacheMode("https://mt1.google.com/vt/lyrs=y&x=1&y=2&z=3"),
+      "force-cache",
+    );
+    assert.equal(
+      mapRequestCacheMode("https://tile.googleapis.com/v1/2dtiles/3/1/2?session=x"),
+      "force-cache",
+    );
+    assert.equal(mapRequestCacheMode("https://tiles.openfreemap.org/styles/liberty"), "no-store");
+    assert.equal(mapRequestCacheMode("https://example.com/1/2/3.png"), undefined);
+  });
+});
+
+describe("proxyMapRequestUrl", () => {
+  const env = {
+    VITE_OPENFREEMAP_PROXY: "/openfreemap/",
+    VITE_GOOGLE_MAP_TILES_PROXY: "/google-map-tiles/",
+  };
+
+  it("routes configured tile hosts through same-origin proxies", () => {
+    assert.equal(
+      proxyMapRequestUrl("https://tiles.openfreemap.org/styles/liberty", env),
+      "/openfreemap/styles/liberty",
+    );
+    assert.equal(
+      proxyMapRequestUrl("https://mt1.google.com/vt/lyrs=s&x=1&y=2&z=3", env),
+      "/google-map-tiles/public/vt/lyrs=s&x=1&y=2&z=3",
+    );
+    assert.equal(
+      proxyMapRequestUrl("https://tile.googleapis.com/v1/2dtiles/3/1/2?session=x", env),
+      "/google-map-tiles/api/v1/2dtiles/3/1/2?session=x",
+    );
+    assert.equal(
+      proxyMapRequestUrl("https://example.com/tile.png", env),
+      "https://example.com/tile.png",
+    );
+  });
+});
 
 describe("MapController.syncLayers reconciliation", () => {
   it("keeps a lower raster beneath every companion of a mixed KML point layer", () => {
@@ -789,6 +840,42 @@ describe("MapController basemap controls", () => {
     );
     assert.ok(hidden);
     assert.equal(hidden.args[2], "none");
+  });
+
+  it("suspends style and lower basemaps beneath an opaque raster basemap", () => {
+    const { map, fake } = makeFakeMap();
+    const controller = controllerWith(map);
+    const basemap = (id: string, basemapOpaque: boolean) =>
+      rasterLayer(id, {
+        metadata: {
+          basemapOpaque,
+          externalNativeLayer: true,
+          nativeLayerIds: [id],
+          sourceKind: "maplibre-basemap-control",
+        },
+      });
+    const lower = basemap("google-satellite", true);
+    const upper = basemap("osm-standard", true);
+
+    controller.syncLayers([lower, upper]);
+    assert.equal(
+      (fake.layers.get("basemap-bg")?.layout as Record<string, unknown>)?.visibility,
+      "none",
+    );
+    assert.equal(
+      (fake.layers.get("google-satellite")?.layout as Record<string, unknown>)?.visibility,
+      "none",
+    );
+
+    controller.syncLayers([lower, { ...upper, opacity: 0.5 }]);
+    assert.equal(
+      (fake.layers.get("basemap-bg")?.layout as Record<string, unknown>)?.visibility,
+      "none",
+    );
+    assert.equal(
+      (fake.layers.get("google-satellite")?.layout as Record<string, unknown>)?.visibility,
+      "visible",
+    );
   });
 
   it("excludes user style layers from the basemap layer set", () => {
@@ -1290,11 +1377,9 @@ describe("MapController built-in control positions", () => {
     const { map } = makeFakeMap();
     const controller = controllerWith(map);
 
-    // geolocate defaults to hidden, so setting its position just records it.
-    // The visible-control reposition path tears down and re-creates a real
-    // maplibregl control, whose constructor needs a DOM (`window`) that
-    // `node --test` does not provide, so it cannot be exercised here; the
-    // generic addControl/removeControl passthrough below covers the map calls.
+    // Hide it first: the visible-control reposition path re-creates a real
+    // MapLibre control, whose constructor needs a DOM unavailable in node:test.
+    controller.setBuiltInControlVisible("geolocate", false);
     const ok = controller.setBuiltInControlPosition("geolocate", "bottom-right");
 
     assert.equal(ok, true);
@@ -1330,7 +1415,10 @@ describe("MapController built-in control positions", () => {
 // Internal surface used to drive the geolocate error handler in plain Node.
 interface GeolocateInternals {
   map: unknown;
-  geolocateControl: { handlers: Record<string, (e: unknown) => void> } | null;
+  geolocateControl: {
+    handlers: Record<string, (e: unknown) => void>;
+    options: unknown;
+  } | null;
   controlVisibility: Record<string, boolean>;
   addGeolocateControl(): boolean;
 }
@@ -1338,6 +1426,7 @@ interface GeolocateInternals {
 /** Minimal stand-in for maplibregl.GeolocateControl that records listeners. */
 class FakeGeolocateControl {
   handlers: Record<string, (e: unknown) => void> = {};
+  constructor(readonly options: unknown) {}
   on(event: string, fn: (e: unknown) => void): void {
     this.handlers[event] = fn;
   }
@@ -1371,7 +1460,10 @@ function stubNavigator(
 function controllerWithGeolocate(): {
   controller: MapController;
   internal: GeolocateInternals;
-  firstControl: { handlers: Record<string, (e: unknown) => void> };
+  firstControl: {
+    handlers: Record<string, (e: unknown) => void>;
+    options: unknown;
+  };
 } {
   const controller = createMapController();
   const internal = controller as unknown as GeolocateInternals;
@@ -1388,12 +1480,22 @@ describe("MapController geolocate permission-denied recovery", () => {
   const originalCreate = geolocateControlFactory.create;
 
   function withStubbedControl(run: () => Promise<void>): Promise<void> {
-    geolocateControlFactory.create = () =>
-      new FakeGeolocateControl() as unknown as maplibregl.GeolocateControl;
+    geolocateControlFactory.create = (options) =>
+      new FakeGeolocateControl(options) as unknown as maplibregl.GeolocateControl;
     return run().finally(() => {
       geolocateControlFactory.create = originalCreate;
     });
   }
+
+  it("uses a fresh one-shot fix so every tap recenters", () =>
+    withStubbedControl(async () => {
+      const { firstControl } = controllerWithGeolocate();
+      assert.deepEqual(firstControl.options, {
+        positionOptions: { enableHighAccuracy: true, maximumAge: 0 },
+        fitBoundsOptions: { maxZoom: 17, duration: 500 },
+        trackUserLocation: false,
+      });
+    }));
 
   it("re-creates the control when the prompt was dismissed (state 'prompt')", () =>
     withStubbedControl(async () => {

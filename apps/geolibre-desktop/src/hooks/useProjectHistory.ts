@@ -92,12 +92,15 @@ export function useProjectHistory(mapControllerRef: RefObject<MapController | nu
     }
     const unsubscribe = useAppStore.subscribe((state, previous) => {
       if (
-        !state.isDirty ||
-        (!projectChanged(state, previous) && state.mapView === previous.mapView)
+        state.projectGeneration === previous.projectGeneration &&
+        !projectChanged(state, previous) &&
+        state.mapView === previous.mapView
       ) {
         return;
       }
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      const delay =
+        state.projectGeneration === previous.projectGeneration ? AUTOSAVE_DELAY_MS : 0;
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;
         // `serializeProject` runs synchronously, so its failure cannot be caught
@@ -134,7 +137,7 @@ export function useProjectHistory(mapControllerRef: RefObject<MapController | nu
         void addProjectSnapshot(content, currentProjectKey()).catch((error) =>
           console.error("Could not autosave the project.", error),
         );
-      }, AUTOSAVE_DELAY_MS);
+      }, delay);
     });
     return () => {
       unsubscribe();

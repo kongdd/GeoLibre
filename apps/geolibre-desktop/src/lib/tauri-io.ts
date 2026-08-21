@@ -4,6 +4,11 @@ import {
   parseProject,
   type GeoLibreProject,
 } from "@geolibre/core";
+import {
+  listRemoteProjects as listRemoteProjectsFromSidecar,
+  readProjectFromRemote,
+  saveProjectToRemote as saveProjectToRemoteSidecar,
+} from "@geolibre/processing";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -34,6 +39,7 @@ import {
   parseDelimitedTextLayer,
 } from "./delimited-text";
 import { isAndroidContentUri, writeInPlaceWithAndroidFallback } from "./android-content-uri";
+import { isAndroid } from "./is-mobile";
 import { startupProjectPath } from "./startup-project";
 import {
   readStartupSnapshot,
@@ -43,6 +49,14 @@ import {
   type StartupSnapshotSlot,
 } from "./startup-project-snapshot";
 import { IS_MAS_BUILD } from "./build-flags";
+import {
+  isRemoteProjectFile,
+  isRemoteProjectPath,
+  REMOTE_PROJECT_ROOT,
+  type RemotePhotoQuality,
+} from "./file-names";
+import { readNativePhoto, setRemoteProjectPhotoPrefix } from "./field-media";
+import { externalizeNativeProjectImages } from "./project-images";
 import type { DuckDbVectorFile } from "./duckdb-vector-loader";
 import {
   confirmLargeDataset,
@@ -248,6 +262,24 @@ export async function listDirectory(path: string): Promise<LocalDirectoryEntry[]
     path: `${base}${entry.name}`,
     isDirectory: entry.isDirectory,
   }));
+}
+
+export async function listRemoteProjectFiles(): Promise<string[]> {
+  if (!isTauri() || isAndroid()) {
+    return (await listRemoteProjectsFromSidecar())
+      .map((path) => `${REMOTE_PROJECT_ROOT}/${path}`)
+      .filter(isRemoteProjectFile)
+      .sort();
+  }
+  const directories = (await readDir(REMOTE_PROJECT_ROOT)).filter((entry) => entry.isDirectory);
+  const projects = await Promise.all(
+    directories.map(async (directory) =>
+      (await readDir(`${REMOTE_PROJECT_ROOT}/${directory.name}`))
+        .filter((entry) => !entry.isDirectory)
+        .map((entry) => `${REMOTE_PROJECT_ROOT}/${directory.name}/${entry.name}`),
+    ),
+  );
+  return projects.flat().filter(isRemoteProjectFile).sort();
 }
 
 // Built at call time so the filter-group label shown in the native file dialog
@@ -538,6 +570,16 @@ export async function readLocalFileBytes(path: string): Promise<Uint8Array<Array
     const buffer = await invoke<ArrayBuffer>("read_local_file", { path });
     return new Uint8Array(buffer);
   }
+}
+
+/** Read a photo referenced by a survey CSV, confined to the CSV directory tree. */
+export async function readSurveyPhotoBytes(
+  csvPath: string,
+  path: string,
+): Promise<Uint8Array<ArrayBuffer>> {
+  if (!isTauri()) throw new Error("Survey photo paths require the desktop app.");
+  const buffer = await invoke<ArrayBuffer>("read_survey_photo", { csvPath, path });
+  return new Uint8Array(buffer);
 }
 
 /**
@@ -2717,7 +2759,7 @@ export async function openProjectFile(): Promise<{
     filters: [{ name: "GeoLibre Project", extensions: ["geolibre", "json"] }],
   });
   if (!selected || typeof selected !== "string") return null;
-  const text = await readTextFile(selected);
+  const text = await hydrateRemoteProjectText(await readTextFile(selected), selected);
   const project = parseProject(text);
   return { project, path: selected, text };
 }
@@ -2899,6 +2941,15 @@ export async function openRecentProjectFile(
     return { project: parseProject(body), path, text: body };
   }
 
+  if ((!isTauri() || isAndroid()) && isRemoteProjectPath(path)) {
+    const relative = path.slice(REMOTE_PROJECT_ROOT.length + 1);
+    const raw = new TextDecoder("utf-8", { fatal: true }).decode(
+      await readProjectFromRemote(relative),
+    );
+    const text = await hydrateRemoteProjectText(raw, path);
+    return { project: parseProject(text), path, text };
+  }
+
   if (!isTauri()) {
     throw new Error("Recent local projects can only be reopened in GeoLibre Desktop.");
   }
@@ -2941,7 +2992,120 @@ export async function openRecentProjectFile(
     throw error;
   }
 
-  return { project: parseProject(text), path, text };
+  return { project: parseProject(await hydrateRemoteProjectText(text, path)), path, text };
+}
+
+async function hydrateRemoteProjectText(content: string, path: string): Promise<string> {
+  if (!path.startsWith(`${REMOTE_PROJECT_ROOT}/`)) {
+    setRemoteProjectPhotoPrefix(null);
+    return content;
+  }
+  const dir = path.slice(0, path.lastIndexOf("/"));
+  setRemoteProjectPhotoPrefix(dir.slice(REMOTE_PROJECT_ROOT.length + 1));
+  return content;
+}
+
+const uploadedRemoteProjectImages = new Set<string>();
+
+export interface RemoteSaveProgress {
+  completedFiles: number;
+  totalFiles: number;
+  uploadedBytes: number;
+  totalBytes: number;
+  projectFiles: number;
+  projectBytes: number;
+  reusedFiles: number;
+  retainedPhotoReferences: number;
+}
+
+export async function saveRemoteProjectFile(
+  content: string,
+  path: string,
+  onProgress?: (progress: RemoteSaveProgress) => void,
+  photoQuality: RemotePhotoQuality = "original",
+  readPhoto = readNativePhoto,
+): Promise<string | null> {
+  const packed = await externalizeNativeProjectImages(content, (source) =>
+    readPhoto(source, photoQuality),
+  );
+  const dir = path.slice(0, path.lastIndexOf("/"));
+  const prefix = dir.slice(REMOTE_PROJECT_ROOT.length + 1);
+  const projectContentBytes = new Blob([packed.content]).size;
+  const projectFiles = packed.files.length + 1;
+  const projectBytes =
+    projectContentBytes + packed.files.reduce((sum, file) => sum + file.bytes.length, 0);
+  const retainedPhotoReferences = packed.imageReferences - packed.nativeReferences;
+  // Android is a Tauri host but cannot mount the server's /mnt/z filesystem.
+  if (!isTauri() || isAndroid()) {
+    const files = packed.files.filter(
+      (file) => !uploadedRemoteProjectImages.has(`${prefix}/${file.path}`),
+    );
+    const totalFiles = files.length + 1;
+    const totalBytes =
+      projectContentBytes + files.reduce((sum, file) => sum + file.bytes.length, 0);
+    const reusedFiles = packed.files.length - files.length;
+    let completedFiles = 0;
+    let uploadedBytes = 0;
+    const report = () =>
+      onProgress?.({
+        completedFiles,
+        totalFiles,
+        uploadedBytes,
+        totalBytes,
+        projectFiles,
+        projectBytes,
+        reusedFiles,
+        retainedPhotoReferences,
+      });
+    report();
+    await Promise.all(
+      files.map(async (file) => {
+        const remotePath = `${prefix}/${file.path}`;
+        await saveProjectToRemoteSidecar(file.bytes, remotePath);
+        uploadedRemoteProjectImages.add(remotePath);
+        completedFiles += 1;
+        uploadedBytes += file.bytes.length;
+        report();
+      }),
+    );
+    await saveProjectToRemoteSidecar(
+      packed.content,
+      `${prefix}/${path.slice(path.lastIndexOf("/") + 1)}`,
+    );
+    completedFiles += 1;
+    uploadedBytes += projectContentBytes;
+    report();
+    return path;
+  }
+  const totalFiles = projectFiles;
+  const totalBytes = projectBytes;
+  let completedFiles = 0;
+  let uploadedBytes = 0;
+  const report = () =>
+    onProgress?.({
+      completedFiles,
+      totalFiles,
+      uploadedBytes,
+      totalBytes,
+      projectFiles,
+      projectBytes,
+      reusedFiles: 0,
+      retainedPhotoReferences,
+    });
+  report();
+  if (packed.files.length > 0) await mkdir(`${dir}/images`, { recursive: true });
+  else await mkdir(dir, { recursive: true });
+  for (const file of packed.files) {
+    await writeFile(`${dir}/${file.path}`, file.bytes);
+    completedFiles += 1;
+    uploadedBytes += file.bytes.length;
+    report();
+  }
+  await writeTextFile(path, packed.content);
+  completedFiles += 1;
+  uploadedBytes += projectContentBytes;
+  report();
+  return path;
 }
 
 export async function saveProjectFile(

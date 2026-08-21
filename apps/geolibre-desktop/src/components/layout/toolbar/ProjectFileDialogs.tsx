@@ -9,6 +9,7 @@ import {
   Input,
   Label,
 } from "@geolibre/ui";
+import { X } from "lucide-react";
 import { useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -16,7 +17,9 @@ import {
   type ProjectFileActions,
 } from "../../../hooks/useProjectFileActions";
 import type { ArcgisProjectImportWarning } from "../../../lib/arcgis-project-import";
+import { REMOTE_PROJECT_ROOT } from "../../../lib/file-names";
 import type { QgisProjectImportWarning } from "../../../lib/qgis-project-import";
+import { formatBytes } from "../../../lib/offline-regions";
 import { SaveTemplateDialog } from "../SaveTemplateDialog";
 import { ImportWarningList } from "./ImportWarningList";
 
@@ -37,6 +40,12 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
     lastSaveNamePrompt.current = projectFiles.saveNamePrompt;
   }
   const saveNameLabels = projectFiles.saveNamePrompt ?? lastSaveNamePrompt.current;
+  const remoteProgress = projectFiles.remoteSaveProgress;
+  const remoteResult = projectFiles.remoteSaveResult;
+  const remoteStats = remoteProgress ?? (remoteResult?.status === "success" ? remoteResult : null);
+  const remotePercent = remoteProgress?.totalBytes
+    ? Math.round((remoteProgress.uploadedBytes / remoteProgress.totalBytes) * 100)
+    : 0;
 
   // Stable identities so the warning lists regroup only when the warnings change.
   const describeArcgisWarning = useCallback(
@@ -56,6 +65,134 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
 
   return (
     <>
+      {remoteProgress || remoteResult ? (
+        <div
+          role={remoteResult?.status === "error" ? "alert" : "status"}
+          aria-live="polite"
+          className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] end-4 z-[70] w-[min(24rem,calc(100vw-2rem))] rounded-lg border bg-card p-3 text-sm shadow-xl"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 space-y-2">
+              <p className="font-medium">
+                {remoteProgress
+                  ? t("remoteSave.saving")
+                  : remoteResult?.status === "success"
+                    ? t("remoteSave.success", {
+                        files: remoteResult.completedFiles,
+                        size: formatBytes(remoteResult.uploadedBytes),
+                      })
+                    : t("remoteSave.failed", { error: remoteResult?.error })}
+              </p>
+              {remoteProgress ? (
+                remoteProgress.totalFiles > 0 ? (
+                  <>
+                    <div
+                      className="h-2 overflow-hidden rounded-full bg-muted"
+                      role="progressbar"
+                      aria-valuenow={remotePercent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                    >
+                      <div
+                        className="h-full bg-primary transition-[width]"
+                        style={{ width: `${remotePercent}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {t("remoteSave.progress", {
+                        completed: remoteProgress.completedFiles,
+                        total: remoteProgress.totalFiles,
+                        saved: formatBytes(remoteProgress.uploadedBytes),
+                        totalSize: formatBytes(remoteProgress.totalBytes),
+                      })}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{t("remoteSave.preparing")}</p>
+                )
+              ) : null}
+              {remoteStats?.projectFiles ? (
+                <p className="text-xs text-muted-foreground">
+                  {t("remoteSave.projectTotal", {
+                    files: remoteStats.projectFiles,
+                    size: formatBytes(remoteStats.projectBytes),
+                    reused: remoteStats.reusedFiles,
+                  })}
+                </p>
+              ) : null}
+              {remoteResult?.status === "success" &&
+              remoteResult.retainedPhotoReferences > 0 ? (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  {t("remoteSave.originalUnavailable", {
+                    count: remoteResult.retainedPhotoReferences,
+                  })}
+                </p>
+              ) : null}
+            </div>
+            {remoteResult ? (
+              <button
+                type="button"
+                className="rounded p-1 text-muted-foreground hover:text-foreground"
+                aria-label={t("common.close")}
+                onClick={projectFiles.dismissRemoteSaveResult}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      <Dialog
+        open={projectFiles.remoteProjectDialogOpen}
+        onOpenChange={projectFiles.setRemoteProjectDialogOpen}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("toolbar.item.openRemoteProject")}</DialogTitle>
+            <DialogDescription>
+              {t("toolbar.item.openRemoteProjectDesc", { path: REMOTE_PROJECT_ROOT })}
+            </DialogDescription>
+          </DialogHeader>
+          {projectFiles.remoteProjectError ? (
+            <p className="text-sm text-destructive">{projectFiles.remoteProjectError}</p>
+          ) : null}
+          {projectFiles.remoteProjectsLoading ? (
+            <p className="text-sm text-muted-foreground">
+              {t("toolbar.item.loadingRemoteProjects")}
+            </p>
+          ) : projectFiles.remoteProjects.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {t("toolbar.item.noRemoteProjects")}
+            </p>
+          ) : (
+            <div className="max-h-80 space-y-2 overflow-y-auto">
+              {projectFiles.remoteProjects.map((path) => (
+                <Button
+                  key={path}
+                  type="button"
+                  variant="outline"
+                  className="h-auto w-full justify-start text-start"
+                  disabled={projectFiles.remoteProjectOpening !== null}
+                  onClick={() => void projectFiles.handleOpenRemoteProject(path)}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{path.split("/").pop()}</span>
+                    <span className="block break-all text-xs text-muted-foreground">{path}</span>
+                  </span>
+                </Button>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => projectFiles.setRemoteProjectDialogOpen(false)}
+            >
+              {t("common.cancel")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={projectFiles.projectUrlDialogOpen}
         onOpenChange={projectFiles.handleProjectUrlDialogOpenChange}

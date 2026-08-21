@@ -88,7 +88,7 @@ import {
   useState,
 } from "react";
 import { loadedVectorTileFeatures } from "../../hooks/useVectorTileGeometryBackfill";
-import { clamp } from "../../lib/clamp";
+import { clamp, parseBoundedNumberDraft } from "../../lib/clamp";
 import {
   getAttributePropertyNames,
   standardExpressionVariables,
@@ -756,10 +756,18 @@ function NumericStyleInput({
   tooltip,
 }: NumericStyleInputProps) {
   const { t } = useTranslation();
+  const [draft, setDraft] = useState(String(value));
   const normalize = (next: number) => Number(clamp(next, min, max).toFixed(stepPrecision(step)));
 
+  useEffect(() => setDraft(String(value)), [value]);
+
+  const commit = (next: number) => {
+    setDraft(String(next));
+    onChange(next);
+  };
+
   const stepValue = (direction: 1 | -1) => {
-    onChange(normalize(value + direction * step));
+    commit(normalize(value + direction * step));
   };
 
   return (
@@ -789,10 +797,16 @@ function NumericStyleInput({
           max={max}
           step={step}
           className="pe-9 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-          value={value}
+          value={draft}
           onChange={(event) => {
-            const next = Number(event.target.value);
-            if (Number.isFinite(next)) onChange(normalize(next));
+            const raw = event.target.value;
+            setDraft(raw);
+            const next = parseBoundedNumberDraft(raw, min, max, stepPrecision(step));
+            if (next !== null) onChange(next);
+          }}
+          onBlur={() => {
+            const parsed = Number(draft);
+            commit(draft.trim() && Number.isFinite(parsed) ? normalize(parsed) : value);
           }}
         />
         <div className="absolute end-1 top-0.5 flex h-8 w-7 flex-col overflow-hidden rounded border bg-background">

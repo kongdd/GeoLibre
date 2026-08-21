@@ -200,6 +200,69 @@ body,
   padding-right: env(safe-area-inset-right);
 }
 
+/* Hug content on desktop (h-auto + max-height); shrink and scroll when the
+   dialog hits the viewport. flex-1 is only applied in the fullscreen query. */
+.field-collection-scroll {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Field Collection is portalled under body, outside #root's safe-area padding.
+   Keep it fullscreen on portrait phones, landscape phones, and coarse-pointer
+   tablets rather than switching solely on viewport width. */
+@media (max-width: 639px),
+  (pointer: coarse) and (max-width: 1024px),
+  (max-height: 639px) and (max-width: 1024px) {
+  .field-collection-dialog {
+    inset: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    --tw-translate-x: 0px !important;
+    --tw-translate-y: 0px !important;
+    transform: none !important;
+    border-width: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .field-collection-header {
+    padding-top: max(1rem, env(safe-area-inset-top));
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(3.5rem, calc(env(safe-area-inset-right) + 3rem));
+  }
+
+  .field-collection-scroll {
+    flex: 1 1 0;
+  }
+
+  .field-collection-scroll-content {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1.5rem, env(safe-area-inset-right));
+  }
+
+  .field-collection-footer {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+  }
+
+  .field-collection-dialog > button {
+    top: max(0.5rem, env(safe-area-inset-top));
+    right: max(0.5rem, env(safe-area-inset-right));
+    display: flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  [dir="rtl"] .field-collection-dialog > button {
+    right: auto;
+    left: max(0.5rem, env(safe-area-inset-left));
+  }
+}
+
 /* MapLibre anchors its controls with physical left/right CSS, so when the app
    runs in a right-to-left locale (html[dir="rtl"]) the inherited direction
    would half-mirror the map chrome (control rows, attribution) while the
@@ -457,6 +520,12 @@ body,
   color: hsl(var(--muted-foreground));
 }
 
+/* GPS Tracking owns the live marker; hide MapLibre's stale one-shot marker. */
+.gps-tracking-active .maplibregl-user-location-dot,
+.gps-tracking-active .maplibregl-user-location-accuracy-circle {
+  display: none;
+}
+
 .geolibre-components-control .maplibregl-ctrl-group,
 .geolibre-components-control .maplibregl-ctrl {
   align-items: center;
@@ -474,7 +543,9 @@ body,
 }
 
 .geolibre-components-control .maplibre-gl-control-grid-content button > svg,
-.geolibre-components-control .maplibre-gl-control-grid-content .maplibregl-ctrl-icon {
+.geolibre-components-control
+  .maplibre-gl-control-grid-content
+  .maplibregl-ctrl-icon {
   display: block;
   flex: 0 0 auto;
   margin: 0 auto;
@@ -507,8 +578,10 @@ body,
   width: 29px;
 }
 
-.geolibre-components-control.maplibre-gl-control-grid--collapsed .maplibre-gl-control-grid-header,
-.geolibre-components-control.maplibre-gl-control-grid--collapsed .maplibre-gl-control-grid-wrench {
+.geolibre-components-control.maplibre-gl-control-grid--collapsed
+  .maplibre-gl-control-grid-header,
+.geolibre-components-control.maplibre-gl-control-grid--collapsed
+  .maplibre-gl-control-grid-wrench {
   height: 29px !important;
   width: 29px !important;
 }
@@ -529,7 +602,9 @@ body,
   max-width: min(340px, calc(100vw - 32px));
 }
 
-.geolibre-components-control .maplibre-gl-control-grid-floating-panel > .maplibregl-ctrl {
+.geolibre-components-control
+  .maplibre-gl-control-grid-floating-panel
+  > .maplibregl-ctrl {
   margin-left: 0 !important;
   margin-right: 0 !important;
 }
@@ -543,20 +618,28 @@ body,
   width: 100% !important;
 }
 
-.geolibre-components-control .maplibre-gl-control-grid-floating-panel > .maplibre-gl-search {
+.geolibre-components-control
+  .maplibre-gl-control-grid-floating-panel
+  > .maplibre-gl-search {
   display: block !important;
   justify-content: normal !important;
 }
 
-.maplibregl-ctrl-top-left .geolibre-components-control .maplibre-gl-control-grid-floating-panel,
-.maplibregl-ctrl-bottom-left .geolibre-components-control .maplibre-gl-control-grid-floating-panel {
+.maplibregl-ctrl-top-left
+  .geolibre-components-control
+  .maplibre-gl-control-grid-floating-panel,
+.maplibregl-ctrl-bottom-left
+  .geolibre-components-control
+  .maplibre-gl-control-grid-floating-panel {
   left: 0 !important;
   max-width: 100% !important;
   right: auto !important;
   width: 100% !important;
 }
 
-.maplibregl-ctrl-top-right .geolibre-components-control .maplibre-gl-control-grid-floating-panel,
+.maplibregl-ctrl-top-right
+  .geolibre-components-control
+  .maplibre-gl-control-grid-floating-panel,
 .maplibregl-ctrl-bottom-right
   .geolibre-components-control
   .maplibre-gl-control-grid-floating-panel {
@@ -795,13 +878,18 @@ body,
   color: hsl(var(--secondary-foreground)) !important;
 }
 
-.geolibre-pmtiles-control .maplibre-gl-pmtiles-layer-form-group > div[style*="background"] {
+.geolibre-pmtiles-control
+  .maplibre-gl-pmtiles-layer-form-group
+  > div[style*="background"] {
   background-color: hsl(var(--background)) !important;
   border-color: hsl(var(--border)) !important;
   color: hsl(var(--foreground)) !important;
 }
 
-.geolibre-pmtiles-control .maplibre-gl-pmtiles-layer-form-group > div[style*="background"] label,
+.geolibre-pmtiles-control
+  .maplibre-gl-pmtiles-layer-form-group
+  > div[style*="background"]
+  label,
 .geolibre-pmtiles-control .maplibre-gl-pmtiles-layer-form-group > div span {
   color: hsl(var(--foreground)) !important;
 }
@@ -920,12 +1008,13 @@ body,
 
 .geolibre-zarr-control .maplibre-gl-zarr-layer-select {
   appearance: none;
-  background-image:
-    linear-gradient(45deg, transparent 50%, hsl(var(--foreground)) 50%),
+  background-image: linear-gradient(
+      45deg,
+      transparent 50%,
+      hsl(var(--foreground)) 50%
+    ),
     linear-gradient(135deg, hsl(var(--foreground)) 50%, transparent 50%);
-  background-position:
-    calc(100% - 14px) 50%,
-    calc(100% - 9px) 50%;
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
   background-repeat: no-repeat;
   background-size: 5px 5px;
   color-scheme: light dark;
@@ -941,8 +1030,10 @@ body,
   padding-right: 0.5rem !important;
 }
 
-.geolibre-zarr-control .maplibre-gl-zarr-layer-input[type="number"]::-webkit-inner-spin-button,
-.geolibre-zarr-control .maplibre-gl-zarr-layer-input[type="number"]::-webkit-outer-spin-button {
+.geolibre-zarr-control
+  .maplibre-gl-zarr-layer-input[type="number"]::-webkit-inner-spin-button,
+.geolibre-zarr-control
+  .maplibre-gl-zarr-layer-input[type="number"]::-webkit-outer-spin-button {
   cursor: pointer;
   opacity: 1;
   transform: scale(1.3);
@@ -1380,7 +1471,8 @@ body,
 
 .geolibre-stac-search-control .maplibre-gl-stac-search-btn:hover:not(:disabled),
 .geolibre-stac-search-control .maplibre-gl-stac-search-btn-clear:hover,
-.geolibre-stac-search-control .maplibre-gl-stac-search-btn-clear-footprints:hover {
+.geolibre-stac-search-control
+  .maplibre-gl-stac-search-btn-clear-footprints:hover {
   background-color: hsl(var(--accent)) !important;
   color: hsl(var(--accent-foreground)) !important;
 }
@@ -1529,8 +1621,12 @@ body,
   accent-color: hsl(var(--primary));
 }
 
-.maplibregl-ctrl-top-left .geolibre-components-control .maplibre-gl-control-grid-relocated,
-.maplibregl-ctrl-bottom-left .geolibre-components-control .maplibre-gl-control-grid-relocated {
+.maplibregl-ctrl-top-left
+  .geolibre-components-control
+  .maplibre-gl-control-grid-relocated,
+.maplibregl-ctrl-bottom-left
+  .geolibre-components-control
+  .maplibre-gl-control-grid-relocated {
   max-width: 100% !important;
   width: 100% !important;
 }
@@ -1538,20 +1634,27 @@ body,
 .maplibregl-ctrl-top-left .geolibre-components-control .left[class*="panel"],
 .maplibregl-ctrl-top-left .geolibre-components-control .right[class*="panel"],
 .maplibregl-ctrl-bottom-left .geolibre-components-control .left[class*="panel"],
-.maplibregl-ctrl-bottom-left .geolibre-components-control .right[class*="panel"] {
+.maplibregl-ctrl-bottom-left
+  .geolibre-components-control
+  .right[class*="panel"] {
   left: 0 !important;
   right: auto !important;
 }
 
 .maplibregl-ctrl-top-right .geolibre-components-control .left[class*="panel"],
 .maplibregl-ctrl-top-right .geolibre-components-control .right[class*="panel"],
-.maplibregl-ctrl-bottom-right .geolibre-components-control .left[class*="panel"],
-.maplibregl-ctrl-bottom-right .geolibre-components-control .right[class*="panel"] {
+.maplibregl-ctrl-bottom-right
+  .geolibre-components-control
+  .left[class*="panel"],
+.maplibregl-ctrl-bottom-right
+  .geolibre-components-control
+  .right[class*="panel"] {
   left: auto !important;
   right: 0 !important;
 }
 
-.geolibre-components-control input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.geolibre-components-control
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 .geolibre-components-control select,
 .geolibre-components-control textarea {
   background-color: #fff !important;
@@ -1713,7 +1816,9 @@ body,
   outline: none;
 }
 
-.geolibre-components-control .maplibre-gl-control-grid-header input[type="number"] {
+.geolibre-components-control
+  .maplibre-gl-control-grid-header
+  input[type="number"] {
   color-scheme: light;
   font-size: 12px;
   height: 22px;
@@ -1782,8 +1887,7 @@ body,
   background: hsl(var(--popover)) !important;
   border: 1px solid hsl(var(--border));
   border-radius: 6px;
-  box-shadow:
-    0 10px 15px -3px rgb(0 0 0 / 0.18),
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.18),
     0 4px 6px -4px rgb(0 0 0 / 0.18);
   color: hsl(var(--popover-foreground)) !important;
 }
@@ -1812,7 +1916,10 @@ body,
   color: hsl(var(--muted-foreground)) !important;
 }
 
-.geolibre-splatting-control .maplibre-gl-splat-panel > div:first-child button:hover {
+.geolibre-splatting-control
+  .maplibre-gl-splat-panel
+  > div:first-child
+  button:hover {
   color: hsl(var(--foreground)) !important;
 }
 
@@ -1821,13 +1928,20 @@ body,
   color: hsl(var(--primary-foreground)) !important;
 }
 
-.geolibre-splatting-control .maplibre-gl-splat-panel div[style*="background: #f8f8f8"],
-.geolibre-splatting-control .maplibre-gl-splat-panel div[style*="background: rgb(248, 248, 248)"] {
+.geolibre-splatting-control
+  .maplibre-gl-splat-panel
+  div[style*="background: #f8f8f8"],
+.geolibre-splatting-control
+  .maplibre-gl-splat-panel
+  div[style*="background: rgb(248, 248, 248)"] {
   background: hsl(var(--secondary)) !important;
   border: 1px solid hsl(var(--border));
 }
 
-.geolibre-splatting-control .maplibre-gl-splat-panel div[style*="background: #f8f8f8"] span,
+.geolibre-splatting-control
+  .maplibre-gl-splat-panel
+  div[style*="background: #f8f8f8"]
+  span,
 .geolibre-splatting-control
   .maplibre-gl-splat-panel
   div[style*="background: rgb(248, 248, 248)"]
@@ -1860,8 +1974,7 @@ body,
   --geolibre-3d-tiles-status-success: #0f9f6e;
   background: hsl(var(--popover)) !important;
   border: 1px solid hsl(var(--border)) !important;
-  box-shadow:
-    0 10px 15px -3px rgb(0 0 0 / 0.18),
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.18),
     0 4px 6px -4px rgb(0 0 0 / 0.18) !important;
   color: hsl(var(--popover-foreground)) !important;
   /* Follow the in-app theme, not the OS: `light dark` let native controls
@@ -1908,8 +2021,10 @@ body,
   padding-right: 4px;
 }
 
-.geolibre-3d-tiles-panel .three-d-tiles-input[type="number"]::-webkit-inner-spin-button,
-.geolibre-3d-tiles-panel .three-d-tiles-input[type="number"]::-webkit-outer-spin-button {
+.geolibre-3d-tiles-panel
+  .three-d-tiles-input[type="number"]::-webkit-inner-spin-button,
+.geolibre-3d-tiles-panel
+  .three-d-tiles-input[type="number"]::-webkit-outer-spin-button {
   min-height: 30px;
   opacity: 1;
   width: 22px;
@@ -2017,12 +2132,7 @@ body,
 
 .geolibre-reset-bearing-needle-label {
   fill: #1e293b;
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     sans-serif;
   font-size: 8px;
   font-weight: 700;
@@ -2095,8 +2205,7 @@ body,
 .geolibre-identify-popup .maplibregl-popup-content {
   background: hsl(var(--popover));
   border: 1px solid hsl(var(--border));
-  box-shadow:
-    0 10px 15px -3px rgb(0 0 0 / 0.18),
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.18),
     0 4px 6px -4px rgb(0 0 0 / 0.18);
   color: hsl(var(--popover-foreground));
   max-height: calc(100vh - 96px);
@@ -2150,13 +2259,16 @@ body,
 
 .geolibre-identify-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
 .geolibre-identify-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
-.geolibre-identify-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+.geolibre-identify-popup.maplibregl-popup-anchor-top-right
+  .maplibregl-popup-tip {
   border-bottom-color: hsl(var(--popover));
 }
 
 .geolibre-identify-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
-.geolibre-identify-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
-.geolibre-identify-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+.geolibre-identify-popup.maplibregl-popup-anchor-bottom-left
+  .maplibregl-popup-tip,
+.geolibre-identify-popup.maplibregl-popup-anchor-bottom-right
+  .maplibregl-popup-tip {
   border-top-color: hsl(var(--popover));
 }
 
@@ -2193,7 +2305,10 @@ body,
      shortfall (Radix reports it via the available-width variable) plus an
      8px edge buffer so the submenu stays fully visible. */
   .geolibre-layout-submenu {
-    margin-left: max(0px, calc(100% - var(--radix-dropdown-menu-content-available-width) + 8px));
+    margin-left: max(
+      0px,
+      calc(100% - var(--radix-dropdown-menu-content-available-width) + 8px)
+    );
   }
 }
 
@@ -2211,30 +2326,37 @@ body,
   background: hsl(var(--popover));
   border: 1px solid hsl(var(--border));
   border-radius: 0.5rem;
-  box-shadow:
-    0 10px 15px -3px rgb(0 0 0 / 0.18),
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.18),
     0 4px 6px -4px rgb(0 0 0 / 0.18);
   color: hsl(var(--popover-foreground));
   padding: 0.625rem 0.75rem;
 }
 
-.geolibre-placement-popup-root.maplibregl-popup-anchor-top .maplibregl-popup-tip,
-.geolibre-placement-popup-root.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
-.geolibre-placement-popup-root.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+.geolibre-placement-popup-root.maplibregl-popup-anchor-top
+  .maplibregl-popup-tip,
+.geolibre-placement-popup-root.maplibregl-popup-anchor-top-left
+  .maplibregl-popup-tip,
+.geolibre-placement-popup-root.maplibregl-popup-anchor-top-right
+  .maplibregl-popup-tip {
   border-bottom-color: hsl(var(--popover));
 }
 
-.geolibre-placement-popup-root.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
-.geolibre-placement-popup-root.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
-.geolibre-placement-popup-root.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+.geolibre-placement-popup-root.maplibregl-popup-anchor-bottom
+  .maplibregl-popup-tip,
+.geolibre-placement-popup-root.maplibregl-popup-anchor-bottom-left
+  .maplibregl-popup-tip,
+.geolibre-placement-popup-root.maplibregl-popup-anchor-bottom-right
+  .maplibregl-popup-tip {
   border-top-color: hsl(var(--popover));
 }
 
-.geolibre-placement-popup-root.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+.geolibre-placement-popup-root.maplibregl-popup-anchor-left
+  .maplibregl-popup-tip {
   border-right-color: hsl(var(--popover));
 }
 
-.geolibre-placement-popup-root.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+.geolibre-placement-popup-root.maplibregl-popup-anchor-right
+  .maplibregl-popup-tip {
   border-left-color: hsl(var(--popover));
 }
 
@@ -2273,8 +2395,7 @@ body,
   background: hsl(var(--popover));
   border: 1px solid hsl(var(--border));
   border-radius: 0.5rem;
-  box-shadow:
-    0 10px 15px -3px rgb(0 0 0 / 0.18),
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.18),
     0 4px 6px -4px rgb(0 0 0 / 0.18);
   color: hsl(var(--popover-foreground));
   padding: 0.5rem;
@@ -2291,14 +2412,18 @@ body,
 }
 
 .geolibre-photo-popup-root.maplibregl-popup-anchor-top .maplibregl-popup-tip,
-.geolibre-photo-popup-root.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
-.geolibre-photo-popup-root.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+.geolibre-photo-popup-root.maplibregl-popup-anchor-top-left
+  .maplibregl-popup-tip,
+.geolibre-photo-popup-root.maplibregl-popup-anchor-top-right
+  .maplibregl-popup-tip {
   border-bottom-color: hsl(var(--popover));
 }
 
 .geolibre-photo-popup-root.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
-.geolibre-photo-popup-root.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
-.geolibre-photo-popup-root.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+.geolibre-photo-popup-root.maplibregl-popup-anchor-bottom-left
+  .maplibregl-popup-tip,
+.geolibre-photo-popup-root.maplibregl-popup-anchor-bottom-right
+  .maplibregl-popup-tip {
   border-top-color: hsl(var(--popover));
 }
 
@@ -2655,6 +2780,25 @@ body,
    onto the app design tokens when the app is in dark mode. Scoped to the
    package's own root/child classes, mirroring the STAC `.pc-control-*` block
    above. Never edit the package's stylesheet in node_modules. */
+
+/* At-a-glance basemap preview thumbnails, injected by GeoLibre on top of the
+   upstream panel. The upstream `_createResults` builds a 2-column grid; the
+   thumbnail occupies the first column so the name stays the visual anchor. */
+.geolibre-basemap-thumbnail {
+  grid-row: 1 / span 3;
+  width: 56px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 3px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  margin-inline-end: 8px;
+  flex: 0 0 auto;
+}
+
+.dark .geolibre-basemap-thumbnail {
+  border-color: hsl(var(--border));
+}
 .dark .basemap-control {
   background: hsl(var(--popover));
   color: hsl(var(--popover-foreground));
@@ -2677,9 +2821,7 @@ body,
 .dark .basemap-control-panel {
   background: hsl(var(--popover));
   color: hsl(var(--popover-foreground));
-  box-shadow:
-    0 8px 28px rgb(0 0 0 / 0.55),
-    0 0 0 1px hsl(var(--border));
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.55), 0 0 0 1px hsl(var(--border));
 }
 
 .dark .basemap-control-header {
@@ -2789,6 +2931,174 @@ body,
   border-color: hsl(var(--muted-foreground));
 }
 
+/* Google Maps-style mobile picker: a dimmed bottom sheet with visual cards. */
+@media (max-width: 639px),
+  (pointer: coarse) and (max-width: 1024px),
+  (max-height: 639px) and (max-width: 1024px) {
+  .maplibregl-map:has(> .basemap-control-panel.expanded)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 999;
+    background: rgb(0 0 0 / 0.42);
+  }
+
+  .basemap-control-panel:not(.is-resized) {
+    inset: auto 0 0 0 !important;
+    box-sizing: border-box;
+    width: 100% !important;
+    height: min(68dvh, 640px);
+    max-width: none;
+    max-height: none;
+    padding: 12px max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -8px 28px rgb(0 0 0 / 0.22);
+  }
+
+  .basemap-control-header {
+    padding: 0 0 8px;
+  }
+
+  .basemap-control-title {
+    font-size: 16px;
+  }
+
+  .basemap-control-close,
+  .basemap-control-settings-toggle {
+    width: 44px;
+    height: 44px;
+  }
+
+  .basemap-control-close {
+    font-size: 32px;
+  }
+
+  .basemap-control-content {
+    flex: 1 1 auto;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .basemap-control-multiple-toggle {
+    gap: 6px;
+    padding: 0 1px;
+    font-size: 11px;
+  }
+
+  .basemap-control-filters {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .basemap-control-status {
+    min-height: 14px;
+    font-size: 11px;
+  }
+
+  .basemap-control-before-id,
+  .basemap-control-result-meta,
+  .basemap-control-result-attribution,
+  .basemap-control-result-type,
+  .basemap-control-resize-handle {
+    display: none;
+  }
+
+  .basemap-control-search-row {
+    display: block;
+  }
+
+  .basemap-control-results {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px 8px;
+    max-height: none;
+    padding: 2px 0 8px;
+  }
+
+  .basemap-control-result {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+    padding: 2px;
+    border: 0;
+    background: transparent;
+    text-align: center;
+  }
+
+  .basemap-control-result:hover,
+  .basemap-control-result.is-active,
+  .dark .basemap-control-result:hover,
+  .dark .basemap-control-result.is-active {
+    background: transparent;
+  }
+
+  .basemap-control-result::before,
+  .geolibre-basemap-thumbnail {
+    box-sizing: border-box;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 4 / 3;
+    border: 1px solid hsl(var(--border));
+    border-radius: 8px;
+  }
+
+  .basemap-control-result:not([data-geolibre-basemap-preview="ready"]):not(
+      [data-geolibre-basemap-preview="loaded"]
+    )::before {
+    content: "";
+    background: linear-gradient(
+        135deg,
+        transparent 42%,
+        hsl(var(--muted-foreground) / 0.35) 43% 48%,
+        transparent 49%
+      ),
+      linear-gradient(
+        35deg,
+        hsl(var(--muted)) 38%,
+        hsl(var(--accent)) 39% 62%,
+        hsl(var(--muted)) 63%
+      );
+  }
+
+  .geolibre-basemap-thumbnail {
+    grid-row: auto;
+    margin: 0;
+    object-fit: cover;
+  }
+
+  .basemap-control-result.is-active::before,
+  .basemap-control-result.is-active .geolibre-basemap-thumbnail {
+    border: 3px solid hsl(var(--primary));
+    outline: 2px solid hsl(var(--background));
+    outline-offset: -5px;
+  }
+
+  .basemap-control-result-main {
+    width: 100%;
+  }
+
+  .basemap-control-result-name {
+    overflow: visible;
+    color: hsl(var(--foreground));
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .basemap-control-result.is-active .basemap-control-result-name {
+    color: hsl(var(--primary));
+    font-weight: 650;
+  }
+}
+
 .geolibre-earth-engine-control .plugin-control-toggle {
   align-items: center;
   display: flex;
@@ -2832,7 +3142,8 @@ body,
   max-width: calc(100% - var(--geolibre-ee-panel-left) * 2);
 }
 
-.dark .geolibre-earth-engine-panel.geolibre-earth-engine-panel.geolibre-earth-engine-panel {
+.dark
+  .geolibre-earth-engine-panel.geolibre-earth-engine-panel.geolibre-earth-engine-panel {
   --ee-shadow: 0 16px 40px hsl(0 0% 0% / 0.4);
 
   color-scheme: dark;
@@ -2949,50 +3260,86 @@ html:not(.dark) .vector-control-layer-picker,
    picker popup from prefers-color-scheme; re-key it to the app theme. The
    html prefixes also outrank the upstream :has() rules when the OS scheme
    and the app theme disagree. */
-html:not(.dark) .maplibregl-popup:has(.vector-control-popup) .maplibregl-popup-content {
+html:not(.dark)
+  .maplibregl-popup:has(.vector-control-popup)
+  .maplibregl-popup-content {
   background: hsl(var(--popover));
   box-shadow: 0 1px 6px hsl(var(--foreground) / 0.25);
 }
 
-html.dark .maplibregl-popup:has(.vector-control-popup) .maplibregl-popup-content {
+html.dark
+  .maplibregl-popup:has(.vector-control-popup)
+  .maplibregl-popup-content {
   background: hsl(var(--popover));
   box-shadow: 0 1px 6px hsl(0 0% 0% / 0.5);
 }
 
-html:not(.dark) .maplibregl-popup:has(.vector-control-popup) .maplibregl-popup-close-button,
-html.dark .maplibregl-popup:has(.vector-control-popup) .maplibregl-popup-close-button {
+html:not(.dark)
+  .maplibregl-popup:has(.vector-control-popup)
+  .maplibregl-popup-close-button,
+html.dark
+  .maplibregl-popup:has(.vector-control-popup)
+  .maplibregl-popup-close-button {
   color: hsl(var(--muted-foreground));
 }
 
-html:not(.dark) .maplibregl-popup-anchor-top:has(.vector-control-popup) .maplibregl-popup-tip,
-html:not(.dark) .maplibregl-popup-anchor-top-left:has(.vector-control-popup) .maplibregl-popup-tip,
-html:not(.dark) .maplibregl-popup-anchor-top-right:has(.vector-control-popup) .maplibregl-popup-tip,
-html.dark .maplibregl-popup-anchor-top:has(.vector-control-popup) .maplibregl-popup-tip,
-html.dark .maplibregl-popup-anchor-top-left:has(.vector-control-popup) .maplibregl-popup-tip,
-html.dark .maplibregl-popup-anchor-top-right:has(.vector-control-popup) .maplibregl-popup-tip {
+html:not(.dark)
+  .maplibregl-popup-anchor-top:has(.vector-control-popup)
+  .maplibregl-popup-tip,
+html:not(.dark)
+  .maplibregl-popup-anchor-top-left:has(.vector-control-popup)
+  .maplibregl-popup-tip,
+html:not(.dark)
+  .maplibregl-popup-anchor-top-right:has(.vector-control-popup)
+  .maplibregl-popup-tip,
+html.dark
+  .maplibregl-popup-anchor-top:has(.vector-control-popup)
+  .maplibregl-popup-tip,
+html.dark
+  .maplibregl-popup-anchor-top-left:has(.vector-control-popup)
+  .maplibregl-popup-tip,
+html.dark
+  .maplibregl-popup-anchor-top-right:has(.vector-control-popup)
+  .maplibregl-popup-tip {
   border-bottom-color: hsl(var(--popover));
 }
 
-html:not(.dark) .maplibregl-popup-anchor-bottom:has(.vector-control-popup) .maplibregl-popup-tip,
+html:not(.dark)
+  .maplibregl-popup-anchor-bottom:has(.vector-control-popup)
+  .maplibregl-popup-tip,
 html:not(.dark)
   .maplibregl-popup-anchor-bottom-left:has(.vector-control-popup)
   .maplibregl-popup-tip,
 html:not(.dark)
   .maplibregl-popup-anchor-bottom-right:has(.vector-control-popup)
   .maplibregl-popup-tip,
-html.dark .maplibregl-popup-anchor-bottom:has(.vector-control-popup) .maplibregl-popup-tip,
-html.dark .maplibregl-popup-anchor-bottom-left:has(.vector-control-popup) .maplibregl-popup-tip,
-html.dark .maplibregl-popup-anchor-bottom-right:has(.vector-control-popup) .maplibregl-popup-tip {
+html.dark
+  .maplibregl-popup-anchor-bottom:has(.vector-control-popup)
+  .maplibregl-popup-tip,
+html.dark
+  .maplibregl-popup-anchor-bottom-left:has(.vector-control-popup)
+  .maplibregl-popup-tip,
+html.dark
+  .maplibregl-popup-anchor-bottom-right:has(.vector-control-popup)
+  .maplibregl-popup-tip {
   border-top-color: hsl(var(--popover));
 }
 
-html:not(.dark) .maplibregl-popup-anchor-left:has(.vector-control-popup) .maplibregl-popup-tip,
-html.dark .maplibregl-popup-anchor-left:has(.vector-control-popup) .maplibregl-popup-tip {
+html:not(.dark)
+  .maplibregl-popup-anchor-left:has(.vector-control-popup)
+  .maplibregl-popup-tip,
+html.dark
+  .maplibregl-popup-anchor-left:has(.vector-control-popup)
+  .maplibregl-popup-tip {
   border-right-color: hsl(var(--popover));
 }
 
-html:not(.dark) .maplibregl-popup-anchor-right:has(.vector-control-popup) .maplibregl-popup-tip,
-html.dark .maplibregl-popup-anchor-right:has(.vector-control-popup) .maplibregl-popup-tip {
+html:not(.dark)
+  .maplibregl-popup-anchor-right:has(.vector-control-popup)
+  .maplibregl-popup-tip,
+html.dark
+  .maplibregl-popup-anchor-right:has(.vector-control-popup)
+  .maplibregl-popup-tip {
   border-left-color: hsl(var(--popover));
 }
 
@@ -3055,10 +3402,12 @@ html.dark .maplibregl-popup-anchor-right:has(.vector-control-popup) .maplibregl-
   color-scheme: light;
 }
 
-.dark .plugin-control.plugin-control.plugin-control.plugin-control.plugin-control,
+.dark
+  .plugin-control.plugin-control.plugin-control.plugin-control.plugin-control,
 .dark
   .plugin-control-panel.plugin-control-panel.plugin-control-panel.plugin-control-panel.plugin-control-panel,
-.dark .fema-wms-popup.fema-wms-popup.fema-wms-popup.fema-wms-popup.fema-wms-popup {
+.dark
+  .fema-wms-popup.fema-wms-popup.fema-wms-popup.fema-wms-popup.fema-wms-popup {
   --fw-shadow: 0 0 0 2px hsl(0 0% 0% / 0.45);
   --ne-shadow: hsl(0 0% 0% / 0.4);
 
@@ -3182,55 +3531,55 @@ html.dark .maplibregl-popup-anchor-right:has(.vector-control-popup) .maplibregl-
    GeoLibre's class-based theming (the app forces color-scheme: light), so map
    them onto the app's design tokens here so the dropdown follows the panel. */
 :is(
-  .duckdb-sample-trigger,
-  .three-d-tiles-sample-trigger,
-  .maplibre-gl-sample-trigger,
-  .splat-sample-trigger,
-  .lidar-sample-trigger
-) {
+    .duckdb-sample-trigger,
+    .three-d-tiles-sample-trigger,
+    .maplibre-gl-sample-trigger,
+    .splat-sample-trigger,
+    .lidar-sample-trigger
+  ) {
   background-color: hsl(var(--background)) !important;
   border-color: hsl(var(--input)) !important;
   color: hsl(var(--muted-foreground)) !important;
 }
 
 :is(
-  .duckdb-sample-trigger,
-  .three-d-tiles-sample-trigger,
-  .maplibre-gl-sample-trigger,
-  .splat-sample-trigger,
-  .lidar-sample-trigger
-):is(:hover, .open, :focus-visible, :active) {
+    .duckdb-sample-trigger,
+    .three-d-tiles-sample-trigger,
+    .maplibre-gl-sample-trigger,
+    .splat-sample-trigger,
+    .lidar-sample-trigger
+  ):is(:hover, .open, :focus-visible, :active) {
   border-color: hsl(var(--ring)) !important;
 }
 
 :is(
-  .duckdb-sample-menu,
-  .three-d-tiles-sample-menu,
-  .maplibre-gl-sample-menu,
-  .splat-sample-menu,
-  .lidar-sample-menu
-) {
+    .duckdb-sample-menu,
+    .three-d-tiles-sample-menu,
+    .maplibre-gl-sample-menu,
+    .splat-sample-menu,
+    .lidar-sample-menu
+  ) {
   background-color: hsl(var(--popover)) !important;
   border-color: hsl(var(--border)) !important;
 }
 
 :is(
-  .duckdb-sample-option,
-  .three-d-tiles-sample-option,
-  .maplibre-gl-sample-option,
-  .splat-sample-option,
-  .lidar-sample-option
-) {
+    .duckdb-sample-option,
+    .three-d-tiles-sample-option,
+    .maplibre-gl-sample-option,
+    .splat-sample-option,
+    .lidar-sample-option
+  ) {
   color: hsl(var(--popover-foreground)) !important;
 }
 
 :is(
-  .duckdb-sample-option,
-  .three-d-tiles-sample-option,
-  .maplibre-gl-sample-option,
-  .splat-sample-option,
-  .lidar-sample-option
-):is(:hover, :focus-visible, :active) {
+    .duckdb-sample-option,
+    .three-d-tiles-sample-option,
+    .maplibre-gl-sample-option,
+    .splat-sample-option,
+    .lidar-sample-option
+  ):is(:hover, :focus-visible, :active) {
   background-color: hsl(var(--accent)) !important;
   color: hsl(var(--accent-foreground)) !important;
 }
@@ -3385,12 +3734,18 @@ html.dark .maplibregl-popup-anchor-right:has(.vector-control-popup) .maplibregl-
   border-top-color: hsl(var(--popover));
 }
 
-:is(.geo-editor-properties-popup, .geo-editor-rotate-popup).maplibregl-popup-anchor-left
+:is(
+    .geo-editor-properties-popup,
+    .geo-editor-rotate-popup
+  ).maplibregl-popup-anchor-left
   .maplibregl-popup-tip {
   border-right-color: hsl(var(--popover));
 }
 
-:is(.geo-editor-properties-popup, .geo-editor-rotate-popup).maplibregl-popup-anchor-right
+:is(
+    .geo-editor-properties-popup,
+    .geo-editor-rotate-popup
+  ).maplibregl-popup-anchor-right
   .maplibregl-popup-tip {
   border-left-color: hsl(var(--popover));
 }
@@ -3657,9 +4012,7 @@ html.dark .maplibregl-popup-anchor-right:has(.vector-control-popup) .maplibregl-
   border: 1px solid var(--ep-border);
   border-radius: 4px;
   cursor: pointer;
-  transition:
-    background-color 0.15s,
-    border-color 0.15s;
+  transition: background-color 0.15s, border-color 0.15s;
 }
 
 .elevation-profile-button:hover:not(:disabled) {
@@ -3680,6 +4033,25 @@ html.dark .maplibregl-popup-anchor-right:has(.vector-control-popup) .maplibregl-
 
 .elevation-profile-unit {
   margin-left: auto;
+}
+
+.elevation-profile-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--ep-muted);
+}
+
+.elevation-profile-source {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  color: var(--ep-text);
+  background: var(--ep-surface);
+  border: 1px solid var(--ep-border);
+  border-radius: 4px;
 }
 
 /* Status line */

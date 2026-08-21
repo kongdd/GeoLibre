@@ -58,7 +58,8 @@ export interface ShareUploadResult {
 }
 
 export interface ShareUploadOptions {
-  token: string;
+  /** Optional on servers configured for anonymous project storage. */
+  token?: string;
   filename: string;
   content: string;
   visibility: ShareVisibility;
@@ -74,6 +75,7 @@ export const DEFAULT_SHARE_BASE_URL = "https://share.geolibre.app";
 // Upload deadline; a hung connection rejects with a TimeoutError rather than
 // spinning forever.
 const UPLOAD_TIMEOUT_MS = 30_000;
+const CAPABILITY_TIMEOUT_MS = 5_000;
 
 // The placeholder name a project gets before the user names it, sourced from
 // @geolibre/core so the Share guard stays in sync with the save fallback.
@@ -237,13 +239,34 @@ interface ShareProjectResponse {
   };
 }
 
+export async function shareServerAllowsAnonymousProjects(
+  options: {
+    baseUrl?: string;
+    signal?: AbortSignal;
+    fetchImpl?: typeof fetch;
+  } = {},
+): Promise<boolean> {
+  const resolved = options.baseUrl ?? resolveShareBaseUrl();
+  if (!resolved) return false;
+  const timeout = AbortSignal.timeout(CAPABILITY_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  try {
+    const response = await (options.fetchImpl ?? getShareFetch())(
+      `${resolved.replace(/\/+$/, "")}/health`,
+      { signal },
+    );
+    if (!response.ok) return false;
+    const body = (await response.json()) as { anonymousProjects?: unknown };
+    return body.anonymousProjects === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function uploadProjectToShare(
   options: ShareUploadOptions,
 ): Promise<ShareUploadResult> {
-  const token = options.token.trim();
-  if (!token) {
-    throw new Error("Add a share API token in Settings before sharing.");
-  }
+  const token = options.token?.trim() ?? "";
 
   // Null means the deployment disabled sharing or named a host that was
   // rejected. The dialog gates on the same state, so reaching here is a bug
@@ -278,7 +301,7 @@ export async function uploadProjectToShare(
     response = await fetchImpl(`${base}/api/projects`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

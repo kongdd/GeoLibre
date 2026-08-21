@@ -8,7 +8,12 @@ import {
   cumulativeDistances,
   thinIndices,
 } from "../elevation/geometry";
-import { fetchElevations, MAX_POINTS_PER_REQUEST, ElevationFetchError } from "../elevation/client";
+import {
+  fetchElevations,
+  MAX_POINTS_PER_REQUEST,
+  ElevationFetchError,
+  type ElevationSource,
+} from "../elevation/client";
 import { selectedProfileLine } from "../elevation/selection";
 import { buildChartGeometry, type ProfilePoint } from "../chart/profileChart";
 import { profileToCsv } from "../export/csv";
@@ -61,6 +66,7 @@ const DEFAULT_OPTIONS: Required<
   title: "Elevation Profile",
   panelWidth: 320,
   unitSystem: "metric",
+  source: "open-meteo",
   className: "",
   maxSamples: MAX_POINTS_PER_REQUEST,
 };
@@ -89,7 +95,7 @@ const pointCollection = (coords: LngLat[]): FeatureCollection<Point> => ({
 
 /**
  * A MapLibre control that draws a line on the map and charts the elevation
- * profile along it, sampling elevations from the Open-Meteo API.
+ * profile along it, sampling elevations from the selected provider.
  *
  * Implements {@link DeepLinkConsumer} so GeoLibre can restore a shared line from
  * a URL parameter, and exposes {@link getState}/{@link setState} for project
@@ -118,6 +124,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   private _selectedButton?: HTMLButtonElement;
   private _clearButton?: HTMLButtonElement;
   private _unitButton?: HTMLButtonElement;
+  private _sourceSelect?: HTMLSelectElement;
   private _readoutEl?: HTMLElement;
   private _exportEl?: HTMLElement;
   private _svgEl?: SVGSVGElement;
@@ -163,6 +170,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     this._state = {
       collapsed: this._options.collapsed,
       unitSystem: this._options.unitSystem,
+      source: this._options.source,
       line: null,
       elevations: null,
     };
@@ -193,7 +201,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
         // The control was re-mounted (e.g. repositioned via
         // setMapControlPosition) with its profile still in memory — only the
         // map's GeoJSON line/vertex layers were torn down in onRemove. Redraw
-        // them without re-hitting Open-Meteo; _createPanel already re-rendered
+        // them without re-fetching elevations; _createPanel already re-rendered
         // the cached stats/chart.
         this._renderLineGeometry(this._state.line);
       } else {
@@ -242,6 +250,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     this._statsEl = undefined;
     this._chartEl = undefined;
     this._selectedButton = undefined;
+    this._sourceSelect = undefined;
     this._exportEl = undefined;
     this._svgEl = undefined;
   }
@@ -253,6 +262,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     return {
       collapsed: this._state.collapsed,
       unitSystem: this._state.unitSystem,
+      source: this._state.source,
       line: this._state.line ? this._state.line.map((c) => [...c] as LngLat) : null,
       elevations: this._state.elevations ? [...this._state.elevations] : null,
     };
@@ -268,19 +278,24 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     const lineChanged =
       ("line" in newState && newState.line !== this._state.line) ||
       ("elevations" in newState && newState.elevations !== this._state.elevations);
+    const sourceChanged = "source" in newState && newState.source !== this._state.source;
     this._state = { ...this._state, ...newState };
 
     if (newState.unitSystem) this._syncUnitButton();
+    if (newState.source) this._syncSourceSelect();
     if (this._panel) {
       this._panel.classList.toggle("expanded", !this._state.collapsed);
     }
 
-    if (lineChanged && this._map) {
-      if (this._state.line && this._state.line.length >= 2) {
-        void this._profileLine(this._state.line, { fit: false }, this._state.elevations);
-      } else {
-        this._clearProfile();
-      }
+    if (
+      (lineChanged || sourceChanged) &&
+      this._map &&
+      this._state.line &&
+      this._state.line.length >= 2
+    ) {
+      void this._profileLine(this._state.line, { fit: false }, this._state.elevations);
+    } else if (lineChanged && this._map) {
+      this._clearProfile();
     } else if (newState.unitSystem) {
       this._renderProfile();
     }
@@ -460,7 +475,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
 
     const sampled = resampleLine(coords, this._options.maxSamples);
     try {
-      const elevations = await fetchElevations(sampled.coords);
+      const elevations = await fetchElevations(sampled.coords, undefined, this._state.source);
       if (token !== this._requestToken) return; // superseded by a newer request
 
       this._sampledCoords = sampled.coords;
@@ -740,6 +755,24 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
 
     actions.append(draw, selected, clear, unit);
 
+    const sourceRow = document.createElement("label");
+    sourceRow.className = "elevation-profile-source-row";
+    sourceRow.append("Source");
+    const source = document.createElement("select");
+    source.className = "elevation-profile-source";
+    source.setAttribute("aria-label", "Elevation data source");
+    for (const [value, label] of [
+      ["open-meteo", "Open-Meteo · GLO-90"],
+      ["trailsplits", "TrailSplits · GLO-30"],
+    ] as Array<[ElevationSource, string]>) {
+      source.add(new Option(label, value));
+    }
+    source.addEventListener("change", () =>
+      this.setState({ source: source.value as ElevationSource }),
+    );
+    sourceRow.appendChild(source);
+    this._sourceSelect = source;
+
     // Status
     const status = document.createElement("div");
     status.className = "elevation-profile-status";
@@ -781,7 +814,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     exportRow.append(exportLabel, csvButton, svgButton);
     this._exportEl = exportRow;
 
-    panel.append(header, actions, status, stats, chart, readout, exportRow);
+    panel.append(header, actions, sourceRow, status, stats, chart, readout, exportRow);
 
     // Re-render the chart at the new pixel size whenever the panel is resized.
     if (typeof ResizeObserver !== "undefined") {
@@ -790,6 +823,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     }
 
     this._syncUnitButton();
+    this._syncSourceSelect();
     this._syncButtons();
     this._renderProfile();
     return panel;
@@ -1118,6 +1152,10 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
       this._unitButton.textContent = unitSystemLabel(this._state.unitSystem);
       this._unitButton.title = `Units: ${unitSystemLabel(this._state.unitSystem)}`;
     }
+  }
+
+  private _syncSourceSelect(): void {
+    if (this._sourceSelect) this._sourceSelect.value = this._state.source;
   }
 
   private _syncButtons(): void {

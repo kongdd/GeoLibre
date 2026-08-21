@@ -150,8 +150,9 @@ kepler.gl, see the [Comparison](comparison.md).
 
 ## Field data collection
 
-- Field Collection tool for capturing point, line, and polygon observations with a per-layer custom form (text, number, date, and choice fields plus an optional photo), placed by device GPS or by tapping the map, written to a GeoJSON layer that flows into the attribute table, export, and offline use
+- Field Collection tool for capturing point, line, and polygon observations with a per-layer custom form plus repeatable notes and up to ten camera/library photos (10 MB total) per observation with recorded camera azimuth, fullscreen review, and post-save editing, placed by device GPS or by tapping the map, written to a GeoJSON layer that flows into the attribute table, export, and offline use
 - Live GPS tracking with a moving position marker, a recorded track log, and digitizing new features directly from the GPS feed. See [GPS tracking](user-guide/map-controls.md#gps-tracking)
+    - Controls logged-point frequency with minimum time, minimum distance, and accuracy filters; optional Douglas–Peucker simplification removes redundant straight-line points on save/export while preserving endpoints and corners
     - Reads either the device's own geolocation or an external **NMEA** GPS/GNSS receiver over Web Serial or Web Bluetooth, with a baud-rate picker and a live sentence and fix counter
 
 ## Storytelling and collaboration

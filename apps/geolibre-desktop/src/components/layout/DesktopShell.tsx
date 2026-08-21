@@ -43,6 +43,7 @@ import {
   subscribeGeometryEdit,
   TIME_SLIDER_PLUGIN_ID,
   VIEWER_BLOCKED_PLUGIN_IDS,
+  FIELD_SURVEY_PLUGIN_ID,
 } from "@geolibre/plugins";
 import {
   convertGeoTiffToCog,
@@ -1205,6 +1206,17 @@ export function DesktopShell({
     return () => setNonTiledRasterHandler(null);
   }, [t]);
 
+  // Field Survey is usable without a basemap, so its entry point must not wait
+  // for MapLibre's `load` event: an unreachable remote style can leave the map
+  // blank while GPS/photo collection should still work offline.
+  useEffect(() => {
+    if (!externalPluginsReady || layoutOptions.viewer) return;
+    const pluginManager = getPluginManager();
+    if (!pluginManager.isActive(FIELD_SURVEY_PLUGIN_ID)) {
+      pluginManager.activate(FIELD_SURVEY_PLUGIN_ID, createAppAPI(mapControllerRef));
+    }
+  }, [externalPluginsReady, layoutOptions.viewer]);
+
   useEffect(() => {
     // Restoration should run only when a project is loaded (projectGeneration)
     // or the map is reinitialised (mapReadyGeneration), not on every
@@ -1280,6 +1292,11 @@ export function DesktopShell({
     // Same contract for the deck.gl overlay: re-attach it to the current map
     // and re-render any deckgl-viz layers a restored project carries.
     restoreDeckViz(appAPI, pluginManager.isActive(DECK_VIZ_PLUGIN_ID));
+    // Project restoration may deactivate plugins absent from the project file,
+    // so reassert the always-available Field Survey entry after restoration.
+    if (!pluginManager.isActive(FIELD_SURVEY_PLUGIN_ID)) {
+      pluginManager.activate(FIELD_SURVEY_PLUGIN_ID, appAPI);
+    }
     const search = window.location.search;
     void pluginManager
       .handleUrlParameters(new URLSearchParams(search), appAPI, `${projectGeneration}:${search}`)

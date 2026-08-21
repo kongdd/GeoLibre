@@ -1,13 +1,15 @@
-import { useAppStore, type MapProjection } from "@geolibre/core";
+import { parseProject, useAppStore, type MapProjection } from "@geolibre/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { dataUrlParameters, serviceUrlParameter } from "../lib/data-url";
 import { isTauri } from "../lib/is-tauri";
+import { listProjectSnapshots } from "../lib/project-history-store";
 import { projectUrlFromLocation } from "../lib/project-url";
 import { planStartup, startupDefaultProjection, type StartupPlan } from "../lib/startup-project";
 import { openRecentProjectFile, RecentProjectGoneError } from "../lib/tauri-io";
 import { resolveProjectXyzLayers } from "../lib/xyz-url";
 import { DEFAULT_STARTUP_SETTINGS, useDesktopSettingsStore } from "./useDesktopSettings";
+import { isEmbedded } from "./embedHost";
 import { loadRecentProjects } from "./useRecentProjectsPersistence";
 
 /**
@@ -55,9 +57,14 @@ function currentStartupPlan(): StartupPlan {
   // happened yet, so "last project" mode does not silently no-op if this hook is
   // ever ordered above it in `App.tsx`.
   const stored = useAppStore.getState().recentProjects;
+  const navigation = performance.getEntriesByType("navigation")[0] as
+    | PerformanceNavigationTiming
+    | undefined;
   return planStartup({
     explicitPayload: hasExplicitLaunchPayload(),
     desktop: isTauri(),
+    embedded: isEmbedded(),
+    reloading: navigation?.type === "reload",
     settings: useDesktopSettingsStore.getState().desktopSettings.startup,
     recentProjects: stored.length > 0 ? stored : loadRecentProjects(),
   });
@@ -98,12 +105,37 @@ export function useStartupProject(): {
   const [restoring, setRestoring] = useState(() => {
     const plan = currentStartupPlan();
     if (plan.kind === "default") applyDefaultProjection(plan.projection);
-    return plan.kind === "restore";
+    return plan.kind === "restore" || plan.kind === "workspace";
   });
 
   useEffect(() => {
     const plan = currentStartupPlan();
-    // Both other cases were settled by the initializer above.
+    if (plan.kind === "workspace") {
+      const restoringOver = useAppStore.getState().projectGeneration;
+      let cancelled = false;
+      void listProjectSnapshots()
+        .then((snapshots) => {
+          const snapshot = snapshots[0];
+          if (!snapshot || cancelled) return;
+          const { projectGeneration, isDirty } = useAppStore.getState();
+          if (projectGeneration !== restoringOver || isDirty) return;
+          const path = snapshot.projectKey?.startsWith("path:")
+            ? snapshot.projectKey.slice(5)
+            : null;
+          useAppStore.getState().loadProject(parseProject(snapshot.content), path, {
+            rememberRecent: false,
+            presenting: false,
+          });
+        })
+        .catch((error) => console.warn("Could not restore the browser workspace.", error))
+        .finally(() => {
+          if (!cancelled) setRestoring(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    // Payload/default cases were settled by the initializer above.
     if (plan.kind !== "restore") return;
     const path = plan.path;
     const settings = useDesktopSettingsStore.getState().desktopSettings.startup;

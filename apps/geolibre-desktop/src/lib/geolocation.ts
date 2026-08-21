@@ -79,11 +79,10 @@ export interface WatchOptions extends PositionOptions {
 }
 
 /**
- * Requested interval between native watch fixes. 1 s is the rate a GNSS
- * receiver produces fixes at, so a live tracker moves smoothly rather than in
- * jumps.
+ * Requested interval between native watch fixes. Three seconds balances live
+ * map updates with battery use during a field survey.
  */
-export const NATIVE_WATCH_INTERVAL_MS = 1000;
+export const NATIVE_WATCH_INTERVAL_MS = 3000;
 
 /**
  * Options for a *native watch*, where `timeout` means something different from

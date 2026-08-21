@@ -58,7 +58,7 @@ import {
   trackPreview,
   trackStats,
 } from "../../lib/gps-tracking";
-import { watchPosition } from "../../lib/geolocation";
+import { getCurrentPosition, watchPosition } from "../../lib/geolocation";
 import type { NmeaStreamStats } from "../../lib/nmea";
 import {
   bluetoothNmeaSupported,
@@ -76,18 +76,23 @@ interface GpsTrackingDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mapControllerRef: React.RefObject<MapController | null>;
+  persistProject: () => Promise<boolean>;
 }
 
 /** Transient map sources for the live position overlays (not store layers, so
  * per-fix updates stay off the undo history and the layer-sync loop). */
 const ACCURACY_SOURCE = "__gps_accuracy__";
 const TRACK_SOURCE = "__gps_track__";
+const GPS_LAYER_IDS = [`${ACCURACY_SOURCE}-fill`, `${TRACK_SOURCE}-line`] as const;
 /** Position marker/accuracy blue; readable on light and dark basemaps. */
 const GPS_COLOR = "#2563eb";
 /** Live track-log line red, matching the field-collection draw color. */
 const TRACK_COLOR = "#ef4444";
 
 const GPS_SETTINGS_STORAGE_KEY = "geolibre.gpsTracking.settings";
+const GPS_FIX_STALE_MS = 15000;
+const GPS_RETRY_BASE_MS = 3000;
+const GPS_RETRY_MAX_MS = 30000;
 /** Remembered baud rate, so reconnecting a receiver doesn't mean re-picking it. */
 const NMEA_BAUD_STORAGE_KEY = "geolibre.gpsTracking.nmeaBaudRate";
 
@@ -162,6 +167,15 @@ function createMarkerElement(): { root: HTMLDivElement; arrow: HTMLDivElement } 
   return { root, arrow };
 }
 
+/** Keep transient GPS overlays above raster basemaps added after tracking starts. */
+export function raiseGpsOverlayLayers(map: maplibregl.Map): void {
+  const present = GPS_LAYER_IDS.filter((id) => map.getLayer(id));
+  if (present.length === 0) return;
+  const order = (map.getStyle().layers ?? []).map(({ id }) => id);
+  if (present.every((id, index) => order.at(index - present.length) === id)) return;
+  for (const id of present) map.moveLayer(id);
+}
+
 /** Lazily (re-)register the overlay sources/layers; heals basemap switches. */
 function ensureGpsSources(map: maplibregl.Map): void {
   // addSource/addLayer throw while a replacement style is still loading; skip
@@ -194,6 +208,7 @@ function ensureGpsSources(map: maplibregl.Map): void {
       },
     });
   }
+  raiseGpsOverlayLayers(map);
 }
 
 function setSourceData(
@@ -259,6 +274,7 @@ export function GpsTrackingDialog({
   open,
   onOpenChange,
   mapControllerRef,
+  persistProject,
 }: GpsTrackingDialogProps) {
   const { t } = useTranslation();
   const addGeoJsonLayer = useAppStore((s) => s.addGeoJsonLayer);
@@ -266,6 +282,7 @@ export function GpsTrackingDialog({
   const setGpsStatus = useAppStore((s) => s.setGpsStatus);
 
   const [tracking, setTracking] = useState(false);
+  const [watchVersion, setWatchVersion] = useState(0);
   const [follow, setFollow] = useState(true);
   const [recording, setRecording] = useState<RecordingState>("off");
   const [lastFix, setLastFix] = useState<GpsFix | null>(null);
@@ -301,6 +318,7 @@ export function GpsTrackingDialog({
   const recordingRef = useRef<RecordingState>("off");
   const followRef = useRef(true);
   const settingsRef = useRef(settings);
+  const retryAttemptRef = useRef(0);
   // First fix after starting zooms the map in; later fixes only pan.
   const zoomedRef = useRef(false);
 
@@ -352,6 +370,8 @@ export function GpsTrackingDialog({
 
   const handleFix = useCallback(
     (fix: GpsFix) => {
+      if (fix.timestamp < (lastFixRef.current?.timestamp ?? 0)) return;
+      retryAttemptRef.current = 0;
       lastFixRef.current = fix;
       setLastFix(fix);
       setError(null);
@@ -413,8 +433,24 @@ export function GpsTrackingDialog({
   // The first fix of every tracking session zooms in, whichever source it came
   // from; later fixes only pan.
   useEffect(() => {
-    if (tracking) zoomedRef.current = false;
+    if (tracking) {
+      zoomedRef.current = false;
+      retryAttemptRef.current = 0;
+    }
   }, [tracking]);
+
+  // Android may drop the native location watch while the app is backgrounded.
+  // Restart it on return; the subscription effect below clears the stale watch.
+  useEffect(() => {
+    if (!tracking || source !== "device") return;
+    const reconnect = () => {
+      if (document.visibilityState !== "visible") return;
+      retryAttemptRef.current = 0;
+      setWatchVersion((v) => v + 1);
+    };
+    document.addEventListener("visibilitychange", reconnect);
+    return () => document.removeEventListener("visibilitychange", reconnect);
+  }, [tracking, source]);
 
   // The watchPosition subscription follows `tracking`, and only runs for the
   // device source — an NMEA receiver drives handleFix from its own stream
@@ -426,33 +462,68 @@ export function GpsTrackingDialog({
   useEffect(() => {
     if (!tracking || source !== "device") return;
     let cancelled = false;
+    let receivedFix = false;
+    let retryTimer: number | undefined;
     let unsubscribe: (() => void) | undefined;
+    const options = { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 };
+    const retry = () => {
+      if (cancelled || retryTimer !== undefined) return;
+      const delay = Math.min(
+        GPS_RETRY_BASE_MS * 2 ** retryAttemptRef.current,
+        GPS_RETRY_MAX_MS,
+      );
+      retryAttemptRef.current += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        setWatchVersion((v) => v + 1);
+      }, delay);
+    };
+    const onPosition = (pos: GeolocationPosition) => {
+      receivedFix = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      retryTimer = undefined;
+      handleFix(fixFromPosition(pos));
+    };
     watchPosition(
-      (pos) => handleFix(fixFromPosition(pos)),
+      onPosition,
       (err) => {
         if (err.permissionDenied) {
           setError(t("gps.permissionDenied"));
           setTracking(false);
         } else {
-          // Transient (no signal / timeout): keep watching, tell the user.
           setError(t("gps.waitingForFix"));
+          retry();
         }
       },
-      { enableHighAccuracy: true, maximumAge: 0 },
+      options,
     )
       .then((unsub) => {
         if (cancelled) unsub();
         else unsubscribe = unsub;
       })
       .catch((err) => {
-        setError(t(err?.permissionDenied ? "gps.permissionDenied" : "gps.noGeolocation"));
-        setTracking(false);
+        if (err?.permissionDenied || err?.unavailable) {
+          setError(t(err.permissionDenied ? "gps.permissionDenied" : "gps.noGeolocation"));
+          setTracking(false);
+        } else {
+          setError(t("gps.waitingForFix"));
+          retry();
+        }
+      });
+    // Android can resume a watch without immediately emitting a new fix.
+    void getCurrentPosition(options)
+      .then((pos) => {
+        if (!cancelled) onPosition(pos);
+      })
+      .catch(() => {
+        if (!receivedFix) retry();
       });
     return () => {
       cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       unsubscribe?.();
     };
-  }, [tracking, source, handleFix, t]);
+  }, [tracking, source, watchVersion, handleFix, t]);
 
   // Map subscriptions while tracking. Manual panning turns follow mode off,
   // QGIS-style, so the map stays where the user dragged it instead of snapping
@@ -464,12 +535,12 @@ export function GpsTrackingDialog({
   useEffect(() => {
     if (!tracking) return;
     const onDragStart = () => setFollowMode(false);
-    // Gated on the source actually being gone, so the frequent styledata
-    // events fired by ordinary style mutations cost one getSource() check.
     const onStyleData = () => {
       const m = getMap();
-      if (!m || m.getSource(TRACK_SOURCE)) return;
+      if (!m) return;
+      const sourcesMissing = !m.getSource(TRACK_SOURCE);
       ensureGpsSources(m);
+      if (!sourcesMissing) return;
       const fix = lastFixRef.current;
       if (fix) setSourceData(m, ACCURACY_SOURCE, accuracyCircle(fix));
       setSourceData(m, TRACK_SOURCE, trackPreview(fixesRef.current));
@@ -479,6 +550,7 @@ export function GpsTrackingDialog({
     const attach = () => {
       map = getMap();
       if (map) {
+        map.getContainer().classList.add("gps-tracking-active");
         map.on("dragstart", onDragStart);
         map.on("styledata", onStyleData);
         return;
@@ -488,6 +560,7 @@ export function GpsTrackingDialog({
     attach();
     return () => {
       if (timer !== undefined) window.clearTimeout(timer);
+      map?.getContainer().classList.remove("gps-tracking-active");
       map?.off("dragstart", onDragStart);
       map?.off("styledata", onStyleData);
     };
@@ -699,6 +772,14 @@ export function GpsTrackingDialog({
     if (map) setSourceData(map, TRACK_SOURCE, EMPTY_FC);
   }, [getMap]);
 
+  // Starting GPS also starts a track; stopping GPS pauses it for later saving.
+  useEffect(() => {
+    if (!tracking || recordingRef.current === "recording") return;
+    if (recordingRef.current === "off") clearTrack();
+    else if (fixesRef.current.at(-1)?.length) fixesRef.current.push([]);
+    changeRecording("recording");
+  }, [tracking, clearTrack, changeRecording]);
+
   const handleStartRecording = useCallback(() => {
     if (!canTrack) return;
     clearTrack();
@@ -734,15 +815,23 @@ export function GpsTrackingDialog({
     return `${t("gps.trackLayerName")} ${label}`;
   }, [t]);
 
-  const handleSaveTrack = useCallback(() => {
+  const handleSaveTrack = useCallback(async () => {
     if (lineSegments(fixesRef.current).length === 0) return;
     const name = trackName();
     const id = addGeoJsonLayer(name, trackFeatureCollection(fixesRef.current));
     updateLayer(id, { metadata: { [GPS_TRACK_FLAG]: true } });
     clearTrack();
     changeRecording("off");
-    setNotice(t("gps.trackSaved", { name }));
-  }, [trackName, addGeoJsonLayer, updateLayer, clearTrack, changeRecording, t]);
+    if (await persistProject()) setNotice(t("gps.trackSaved", { name }));
+  }, [
+    trackName,
+    addGeoJsonLayer,
+    updateLayer,
+    persistProject,
+    clearTrack,
+    changeRecording,
+    t,
+  ]);
 
   const handleExportTrack = useCallback(
     async (format: "gpx" | "geojson") => {
@@ -778,8 +867,26 @@ export function GpsTrackingDialog({
     [trackName, t],
   );
 
-  const handleCapturePoint = useCallback(() => {
-    const fix = lastFixRef.current;
+  const handleCapturePoint = useCallback(async () => {
+    let fix = lastFixRef.current;
+    if (
+      source === "device" &&
+      (!fix || error || Date.now() - fix.timestamp > GPS_FIX_STALE_MS)
+    ) {
+      setError(t("gps.waitingForFix"));
+      retryAttemptRef.current = 0;
+      setWatchVersion((v) => v + 1);
+      try {
+        fix = fixFromPosition(
+          await getCurrentPosition({ enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }),
+        );
+        handleFix(fix);
+      } catch (err) {
+        const denied = (err as { permissionDenied?: boolean })?.permissionDenied;
+        setError(t(denied ? "gps.permissionDenied" : "gps.waitingForFix"));
+        return;
+      }
+    }
     if (!fix) return;
     if (!fixMeetsAccuracy(fix, settingsRef.current)) {
       setNotice(
@@ -810,8 +917,8 @@ export function GpsTrackingDialog({
       },
     });
     setCapturedCount((n) => n + 1);
-    setNotice(t("gps.pointCaptured", { layer: layer.name }));
-  }, [t]);
+    if (await persistProject()) setNotice(t("gps.pointCaptured", { layer: layer.name }));
+  }, [source, error, handleFix, persistProject, t]);
 
   const stats = trackStats(fixesRef.current);
   // `fixCount` in the guard keeps this recomputed as fixes arrive.
@@ -983,7 +1090,7 @@ export function GpsTrackingDialog({
                 <Button
                   variant="outline"
                   className="w-full"
-                  disabled={!lastFix}
+                  disabled={!tracking}
                   onClick={handleCapturePoint}
                 >
                   <MapPin className="me-2 h-4 w-4" />
@@ -998,8 +1105,23 @@ export function GpsTrackingDialog({
 
               <Separator />
 
-              {/* Settings */}
+              {/* Recording settings and fix filters */}
               <div className="space-y-2">
+                <Label>{t("settings.title")}</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <SettingField
+                    id="gps-record-distance"
+                    label={t("gps.recordDistance")}
+                    value={settings.recordDistanceM}
+                    onChange={(v) => updateSettings({ recordDistanceM: v })}
+                  />
+                  <SettingField
+                    id="gps-record-interval"
+                    label={t("gps.recordInterval")}
+                    value={settings.recordIntervalS}
+                    onChange={(v) => updateSettings({ recordIntervalS: v })}
+                  />
+                </div>
                 <Label>{t("gps.settings")}</Label>
                 <div className="grid grid-cols-3 gap-2">
                   <SettingField
@@ -1284,7 +1406,7 @@ function FloatingPanel({
         </div>
       )}
       <div className="flex items-center gap-2">
-        <Button size="sm" variant="outline" disabled={!fix} onClick={onCapture}>
+        <Button size="sm" variant="outline" onClick={onCapture}>
           <MapPin className="me-1 h-3.5 w-3.5" />
           {t("gps.capturePoint")}
         </Button>

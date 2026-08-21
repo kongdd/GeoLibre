@@ -4,6 +4,37 @@
 
 import { DEFAULT_PROJECT_NAME } from "@geolibre/core";
 
+export const REMOTE_PROJECT_ROOT = "/mnt/z/GeoLibre";
+export type ProjectDataStorage = "local" | "remote";
+export type RemotePhotoQuality = "original" | "optimized";
+
+export function projectDataStorage(metadata: Record<string, unknown>): ProjectDataStorage {
+  return metadata.dataStorage === "remote" ? "remote" : "local";
+}
+
+export function remotePhotoQuality(metadata: Record<string, unknown>): RemotePhotoQuality {
+  return metadata.remotePhotoQuality === "optimized" ? "optimized" : "original";
+}
+
+export function isRemoteProjectPath(path: string): boolean {
+  return path.startsWith(`${REMOTE_PROJECT_ROOT}/`);
+}
+
+export function remoteProjectSlug(name: string): string {
+  const file = ensureProjectFileName(name).replace(/[\\/]/g, "_");
+  return file.replace(/\.(geolibre\.json|geolibre|json)$/i, "") || "project";
+}
+
+export function isRemoteProjectFile(path: string): boolean {
+  if (!isRemoteProjectPath(path)) return false;
+  const parts = path.slice(REMOTE_PROJECT_ROOT.length + 1).split("/");
+  return (
+    parts.length === 2 &&
+    parts.every((part) => part !== "" && part !== "." && part !== "..") &&
+    /\.(geolibre|geolibre\.json|json)$/i.test(parts[1])
+  );
+}
+
 /**
  * Ensure a user-entered project file name carries a recognized extension,
  * defaulting to `.geolibre.json` when none is present so the downloaded file
@@ -16,6 +47,12 @@ export function ensureProjectFileName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return `${DEFAULT_PROJECT_NAME}.geolibre.json`;
   return /\.(geolibre\.json|geolibre|json)$/i.test(trimmed) ? trimmed : `${trimmed}.geolibre.json`;
+}
+
+export function remoteProjectFilePath(name: string): string {
+  const slug = remoteProjectSlug(name);
+  const file = ensureProjectFileName(name).replace(/[\\/]/g, "_");
+  return `${REMOTE_PROJECT_ROOT}/${slug}/${file}`;
 }
 
 /**

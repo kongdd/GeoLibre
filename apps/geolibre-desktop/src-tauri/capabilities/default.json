@@ -10,6 +10,7 @@
     "fs:allow-read-dir",
     "fs:allow-read-file",
     "fs:allow-read-text-file",
+    "fs:allow-mkdir",
     "fs:allow-write-file",
     "fs:allow-write-text-file",
     "fs:allow-watch",
@@ -19,6 +20,10 @@
     "geolocation:allow-get-current-position",
     "geolocation:allow-watch-position",
     "geolocation:allow-clear-watch",
+    "field-media:allow-capture-photo",
+    "field-media:allow-pick-photos",
+    "field-media:allow-open-photo",
+    "field-media:allow-read-photo",
     {
       "comment": "Cleanup of the temporary GeoJSON the sidecar writes when a File Geodatabase layer is added (GdbSource); scoped to exactly that filename pattern so nothing else becomes deletable.",
       "identifier": "fs:allow-remove",
@@ -29,7 +34,11 @@
       "identifier": "fs:scope",
       "allow": [
         { "path": "$APPLOCALDATA/startup-projects" },
-        { "path": "$APPLOCALDATA/startup-projects/*" }
+        { "path": "$APPLOCALDATA/startup-projects/*" },
+        { "path": "$APPDATA/field-survey-*.geolibre.json" },
+        { "path": "/mnt/z/GeoLibre" },
+        { "path": "/mnt/z/GeoLibre/*" },
+        { "path": "/mnt/z/GeoLibre/**" }
       ]
     },
     {

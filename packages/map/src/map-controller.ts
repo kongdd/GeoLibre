@@ -3,6 +3,7 @@ import {
   DEFAULT_BASEMAP,
   DEFAULT_PROJECT_PREFERENCES,
   getPlanetaryBasemapByStyleUrl,
+  getRuntimeEnvironment,
   getRegionalBasemapByStyleUrl,
   isRegionalBasemapSentinel,
   PLANETARY_BASEMAP_SENTINEL_PREFIX,
@@ -83,6 +84,60 @@ const DEFAULT_PROJECTION: maplibregl.ProjectionSpecification = {
   type: "globe",
 };
 const DEFAULT_MAX_PITCH = 85;
+
+export function mapRequestCacheMode(url: string): RequestCache | undefined {
+  if (url.startsWith("https://tiles.openfreemap.org/styles/")) return "no-store";
+  try {
+    return /(?:^|\.)(?:openfreemap\.org|cartocdn\.com|mt1\.google\.com|tile\.googleapis\.com)$/.test(
+      new URL(url).hostname,
+    )
+      ? "force-cache"
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether a visible, opaque raster basemap fully covers the style below. */
+function occludesStyleBasemap(layer: GeoLibreLayer): boolean {
+  if (
+    layer.type !== "raster" ||
+    !layer.visible ||
+    layer.opacity < 1 ||
+    layer.metadata.sourceKind !== "maplibre-basemap-control"
+  ) {
+    return false;
+  }
+  if (typeof layer.metadata.basemapOpaque === "boolean") {
+    return layer.metadata.basemapOpaque;
+  }
+  // Legacy projects predate basemapOpaque; infer the known transparent groups.
+  return (
+    layer.metadata.category !== "Labels" &&
+    layer.metadata.category !== "Traffic" &&
+    layer.metadata.basemapProvider !== "openrailwaymap"
+  );
+}
+
+export function proxyMapRequestUrl(
+  url: string,
+  env: Record<string, string | undefined> = getRuntimeEnvironment(),
+): string {
+  const openFreeMapProxy = env.VITE_OPENFREEMAP_PROXY?.replace(/\/$/, "");
+  if (openFreeMapProxy && url.startsWith("https://tiles.openfreemap.org/")) {
+    return `${openFreeMapProxy}${url.slice("https://tiles.openfreemap.org".length)}`;
+  }
+
+  const googleProxy = env.VITE_GOOGLE_MAP_TILES_PROXY?.replace(/\/$/, "");
+  if (googleProxy && url.startsWith("https://mt1.google.com/")) {
+    return `${googleProxy}/public${url.slice("https://mt1.google.com".length)}`;
+  }
+  if (googleProxy && url.startsWith("https://tile.googleapis.com/")) {
+    return `${googleProxy}/api${url.slice("https://tile.googleapis.com".length)}`;
+  }
+  return url;
+}
+
 /** Edge margin, in CSS pixels, kept free when fitting the camera to an extent. */
 const FIT_BOUNDS_PADDING = 40;
 const BLANK_BACKGROUND_LAYER_ID = "geolibre-blank-background";
@@ -428,7 +483,7 @@ export const DEFAULT_BUILT_IN_CONTROL_VISIBILITY: Record<BuiltInMapControl, bool
   navigation: false,
   fullscreen: true,
   compass: true,
-  geolocate: false,
+  geolocate: true,
   globe: true,
   terrain: false,
   scale: true,
@@ -552,6 +607,16 @@ export class MapController {
     this.map = new maplibregl.Map({
       container,
       style: deferMapboxStyle ? createBlankMapStyle() : resolveMapStyle(this.basemapStyleUrl),
+      transformRequest: (url) => {
+        const cache = mapRequestCacheMode(url);
+        return {
+          url: proxyMapRequestUrl(url),
+          // Keep immutable basemap tiles in the WebView's persistent HTTP cache,
+          // but always refetch styles so a previously truncated response cannot
+          // strand the map after the server recovers.
+          ...(cache ? { cache } : {}),
+        };
+      },
       center: view?.center ?? [-100, 40],
       zoom: view?.zoom ?? 2,
       bearing: view?.bearing ?? 0,
@@ -1242,8 +1307,17 @@ export class MapController {
     // converge, but a map-only embed (`?maponly`) has no panels to trigger one,
     // so the wrong stack is what the viewer keeps looking at. See
     // opengeos/GeoLibre#1404.
+    let opaqueBasemapAbove = false;
     for (let index = layers.length - 1; index >= 0; index -= 1) {
-      syncLayer(map, layers[index], this.getBeforeStyleLayerId(layers, index));
+      const layer = layers[index];
+      const coveredBasemap =
+        opaqueBasemapAbove && layer.metadata.sourceKind === "maplibre-basemap-control";
+      syncLayer(
+        map,
+        coveredBasemap ? { ...layer, visible: false } : layer,
+        this.getBeforeStyleLayerId(layers, index),
+      );
+      if (occludesStyleBasemap(layer)) opaqueBasemapAbove = true;
     }
     this.layerIds = nextIds;
     this.syncedLayers = layers;
@@ -1292,7 +1366,11 @@ export class MapController {
   private applyBasemapVisibility(): void {
     if (!this.isStyleReady() || !this.map) return;
     const map = this.map;
-    const visibility = this.basemapVisible ? "visible" : "none";
+    // Do not keep downloading and drawing the style hidden beneath an opaque
+    // raster basemap. Restore it automatically when that raster is hidden,
+    // removed, or made translucent; label/traffic/rail overlays stay transparent.
+    const occluded = this.syncedLayers.some(occludesStyleBasemap);
+    const visibility = this.basemapVisible && !occluded ? "visible" : "none";
 
     for (const layer of this.getBasemapStyleLayers()) {
       try {
@@ -1866,10 +1944,9 @@ export class MapController {
       source: highlightSourceId(),
       filter: ["match", ["geometry-type"], ["Point", "MultiPoint"], true, false],
       paint: {
-        "circle-color": "#facc15",
-        "circle-radius": 9,
-        "circle-opacity": 0.95,
-        "circle-stroke-color": "#111827",
+        "circle-color": "rgba(0, 0, 0, 0)",
+        "circle-radius": 24,
+        "circle-stroke-color": "#f59e0b",
         "circle-stroke-width": 3,
       },
     });
@@ -2527,8 +2604,12 @@ export class MapController {
     const control = geolocateControlFactory.create({
       positionOptions: {
         enableHighAccuracy: true,
+        maximumAge: 0,
       },
-      trackUserLocation: true,
+      fitBoundsOptions: { maxZoom: 17, duration: 500 },
+      // Keep this one-shot: every tap requests a fresh fix and immediately
+      // recenters, without MapLibre's active/passive/off tracking state cycle.
+      trackUserLocation: false,
     });
     // MapLibre permanently disables the GeolocateControl button on a
     // PERMISSION_DENIED error (code 1). Browsers report code 1 both for a real

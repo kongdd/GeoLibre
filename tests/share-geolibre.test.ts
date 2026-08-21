@@ -10,6 +10,7 @@ import {
   resolveShareHost,
   SHARE_URL_ENV,
   shareHostLabel,
+  shareServerAllowsAnonymousProjects,
   ShareUploadError,
   uploadProjectToShare,
 } from "../apps/geolibre-desktop/src/lib/share-geolibre";
@@ -200,6 +201,21 @@ describe("shareHostLabel", () => {
   });
 });
 
+describe("shareServerAllowsAnonymousProjects", () => {
+  it("reads the server capability without authentication", async () => {
+    const { fn, calls } = fakeFetch(200, { anonymousProjects: true });
+    assert.equal(
+      await shareServerAllowsAnonymousProjects({
+        baseUrl: "https://share.example/",
+        fetchImpl: fn,
+      }),
+      true,
+    );
+    assert.equal(calls[0].url, "https://share.example/health");
+    assert.equal((calls[0].init.headers as Record<string, string> | undefined)?.Authorization, undefined);
+  });
+});
+
 describe("uploadProjectToShare", () => {
   it("redacts credentials before the share request leaves the app", async () => {
     const { fn, calls } = fakeFetch(201, { project: PROJECT_DTO });
@@ -233,8 +249,11 @@ describe("uploadProjectToShare", () => {
     assert.ok(!("requestHeaders" in shared.layers[0].source));
   });
 
-  it("rejects when no token is provided", async () => {
-    await assert.rejects(() => uploadProjectToShare({ ...baseArgs, token: "  " }), /token/i);
+  it("omits authorization for an anonymous project server", async () => {
+    const { fn, calls } = fakeFetch(201, { project: PROJECT_DTO });
+    await uploadProjectToShare({ ...baseArgs, token: "  ", fetchImpl: fn });
+    const headers = calls[0].init.headers as Record<string, string>;
+    assert.equal(headers.Authorization, undefined);
   });
 
   it("POSTs the project with a bearer token and returns the URLs", async () => {

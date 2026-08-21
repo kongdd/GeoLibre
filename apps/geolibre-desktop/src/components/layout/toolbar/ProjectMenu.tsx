@@ -1,6 +1,11 @@
-import { projectPathLabel, useAppStore } from "@geolibre/core";
+import { PROJECT_VERSION, projectPathLabel, useAppStore } from "@geolibre/core";
 import {
   Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -10,10 +15,13 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
+  Label,
+  Select,
 } from "@geolibre/ui";
 import {
   BookOpen,
   Bookmark,
+  Cloud,
   Copy,
   FileCode2,
   FileInput,
@@ -25,6 +33,7 @@ import {
   HardDriveDownload,
   History,
   Import,
+  Info,
   LayoutGrid,
   Link2,
   Printer,
@@ -33,15 +42,123 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDesktopSettingsStore } from "../../../hooks/useDesktopSettings";
 import { isMenuItemVisible } from "../../../lib/ui-profile";
 import type { ShareHostStatus } from "../../../lib/share-geolibre";
+import {
+  projectDataStorage,
+  remotePhotoQuality,
+  REMOTE_PROJECT_ROOT,
+  type ProjectDataStorage,
+  type RemotePhotoQuality,
+} from "../../../lib/file-names";
+import { fieldCollectionPointStats } from "../../../lib/field-collection";
 import { formatRecentProjectTime, type ToolbarChrome } from "./constants";
 
 // aria-describedby targets for the "sharing server unavailable" explanation.
 const SHARE_UNAVAILABLE_ID = "project-menu-share-unavailable";
 const GALLERY_UNAVAILABLE_ID = "project-menu-gallery-unavailable";
+
+function ProjectPropertiesDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const projectName = useAppStore((s) => s.projectName);
+  const projectPath = useAppStore((s) => s.projectPath);
+  const isDirty = useAppStore((s) => s.isDirty);
+  const metadata = useAppStore((s) => s.metadata);
+  const dataStorage = projectDataStorage(metadata);
+  const photoQuality = remotePhotoQuality(metadata);
+  const layers = useAppStore((s) => s.layers);
+  const fieldStats = useMemo(() => fieldCollectionPointStats(layers), [layers]);
+  const groupCount = useAppStore((s) => s.layerGroups.length);
+  const status = projectPath
+    ? t(isDirty ? "projectProperties.modified" : "projectProperties.saved")
+    : t("projectProperties.notSaved");
+  const rows = [
+    [t("projectProperties.name"), projectName],
+    [t("projectProperties.path"), projectPath ?? t("projectProperties.unsavedPath")],
+    [t("projectProperties.formatVersion"), PROJECT_VERSION],
+    [t("projectProperties.status"), status],
+    [t("projectProperties.layers"), String(layers.length)],
+    [t("projectProperties.groups"), String(groupCount)],
+    [t("projectProperties.samplingPoints"), String(fieldStats.points)],
+    [t("projectProperties.pointsWithPhotos"), String(fieldStats.pointsWithPhotos)],
+    [t("projectProperties.photos"), String(fieldStats.photos)],
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg" closeLabel={t("common.close")}>
+        <DialogHeader>
+          <DialogTitle>{t("projectProperties.title")}</DialogTitle>
+          <DialogDescription>{t("projectProperties.description")}</DialogDescription>
+        </DialogHeader>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
+          {rows.map(([label, value]) => (
+            <div key={label} className="contents">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="min-w-0 break-all font-medium" title={value}>
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <div className="space-y-2 border-t pt-4">
+          <Label htmlFor="project-data-storage">{t("projectProperties.dataStorage")}</Label>
+          <Select
+            id="project-data-storage"
+            value={dataStorage}
+            onChange={(event) => {
+              const value = event.target.value as ProjectDataStorage;
+              useAppStore.setState((state) =>
+                projectDataStorage(state.metadata) === value
+                  ? state
+                  : {
+                      metadata: { ...state.metadata, dataStorage: value },
+                      isDirty: true,
+                    },
+              );
+            }}
+          >
+            <option value="local">{t("projectProperties.storageLocal")}</option>
+            <option value="remote">{t("projectProperties.storageRemote")}</option>
+          </Select>
+          {dataStorage === "remote" ? (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {t("projectProperties.remoteStoragePath", { path: REMOTE_PROJECT_ROOT })}
+              </p>
+              <Label htmlFor="remote-photo-quality">
+                {t("projectProperties.remotePhotoQuality")}
+              </Label>
+              <Select
+                id="remote-photo-quality"
+                value={photoQuality}
+                onChange={(event) => {
+                  const value = event.target.value as RemotePhotoQuality;
+                  useAppStore.setState((state) => ({
+                    metadata: { ...state.metadata, remotePhotoQuality: value },
+                    isDirty: true,
+                  }));
+                }}
+              >
+                <option value="original">{t("projectProperties.photoQualityOriginal")}</option>
+                <option value="optimized">{t("projectProperties.photoQualityOptimized")}</option>
+              </Select>
+            </div>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 interface ProjectMenuProps {
   chrome: ToolbarChrome;
@@ -55,6 +172,7 @@ interface ProjectMenuProps {
   shareHostStatus: ShareHostStatus;
   onNewProject: () => void;
   onOpenFromFile: () => void;
+  onOpenFromRemote: () => void;
   onOpenFromUrl: () => void;
   onOpenGallery: () => void;
   onImportQgisProject: () => void;
@@ -79,6 +197,7 @@ export function ProjectMenu({
   shareHostStatus,
   onNewProject,
   onOpenFromFile,
+  onOpenFromRemote,
   onOpenFromUrl,
   onOpenGallery,
   onImportQgisProject,
@@ -96,6 +215,7 @@ export function ProjectMenu({
   onOpenOfflineBasemap,
 }: ProjectMenuProps) {
   const { t } = useTranslation();
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
   const projectPath = useAppStore((s) => s.projectPath);
   const recentProjects = useAppStore((s) => s.recentProjects);
   const forgetRecentProject = useAppStore((s) => s.forgetRecentProject);
@@ -163,6 +283,10 @@ export function ProjectMenu({
               <DropdownMenuItem onSelect={onOpenFromFile}>
                 <FileText className="me-2 h-3.5 w-3.5" />
                 {t("toolbar.item.fileEllipsis")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onOpenFromRemote}>
+                <Cloud className="me-2 h-3.5 w-3.5" />
+                {t("toolbar.item.remoteEllipsis")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={onOpenFromUrl}>
                 <Link2 className="me-2 h-3.5 w-3.5" />
@@ -249,6 +373,12 @@ export function ProjectMenu({
           <DropdownMenuItem onSelect={onOpenHistory}>
             <History className="me-2 h-3.5 w-3.5" />
             {t("toolbar.item.projectHistoryEllipsis")}
+          </DropdownMenuItem>
+        )}
+        {show("project.properties") && (
+          <DropdownMenuItem onSelect={() => setPropertiesOpen(true)}>
+            <Info className="me-2 h-3.5 w-3.5" />
+            {t("toolbar.item.projectPropertiesEllipsis")}
           </DropdownMenuItem>
         )}
         {show("project.import") && (
@@ -342,6 +472,7 @@ export function ProjectMenu({
           </>
         )}
       </DropdownMenuContent>
+      <ProjectPropertiesDialog open={propertiesOpen} onOpenChange={setPropertiesOpen} />
     </DropdownMenu>
   );
 }

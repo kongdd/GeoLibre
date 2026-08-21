@@ -176,6 +176,10 @@ export {
 export {
   checkSidecarHealth,
   setSidecarAuthToken,
+  listRemoteProjects,
+  readProjectFromRemote,
+  remoteProjectFileUrl,
+  saveProjectToRemote,
   clearRemoteWhiteboxCatalogSnapshotCache,
   fetchConversionJob,
   fetchConversionStatus,

@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -12,6 +12,7 @@ import { copyCesiumAssets } from "./vite-plugins/copy-cesium-assets";
 import { copyRtlText } from "./vite-plugins/copy-rtl-text";
 import { copyVectorOps } from "./vite-plugins/copy-vector-ops";
 import { proxyBinaryRequestGuarded } from "./vite-proxy-guard";
+import { remoteProjectStore } from "./vite-plugins/remote-project-store";
 
 const GEOAGENT_BROWSER_BUNDLE = "maplibre-gl-geoagent/dist/browser-";
 const EARTH_ENGINE_CONTROL_BUNDLE = "maplibre-gl-earth-engine/dist/";
@@ -109,6 +110,7 @@ if (!process.env.VITE_GEE_OAUTH_CLIENT_ID) {
 // (`npm run build`), so their presence flags a desktop build. Used below to drop
 // the service worker from the desktop bundle.
 const IS_TAURI_BUILD = !!process.env.TAURI_ENV_PLATFORM;
+const IS_FIELD_SURVEY_ONLY = process.env.GEOLIBRE_FIELD_SURVEY_ONLY === "1";
 
 // Strip ALL external CDN references (unpkg.com, cdn.jsdelivr.net, etc.) from the
 // build output. When set, features that depend on external CDN-hosted resources
@@ -667,6 +669,47 @@ function removeJupyterLiteFromTauriDistPlugin(): Plugin {
   };
 }
 
+function removeNonSurveyAssetsPlugin(): Plugin {
+  return {
+    name: "geolibre-remove-non-survey-assets",
+    apply: "build",
+    closeBundle() {
+      if (!IS_TAURI_BUILD || !IS_FIELD_SURVEY_ONLY) return;
+      // `__dirname` is not defined in this ESM config (`"type":"module"` in
+      // package.json); resolve from import.meta.url so rmSync targets the
+      // real dist directory instead of `path.resolve(undefined,"dist")` which
+      // throws on Node ≥20 and silently no-ops when coerced.
+      const dist = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "dist",
+      );
+      for (const name of ["cesium", "jupyterlite", "pyodide"]) {
+        rmSync(path.join(dist, name), { recursive: true, force: true });
+      }
+      const assets = path.join(dist, "assets");
+      const unused =
+        /\.(?:wasm|data)$|^(?:AssistantPanel|blosc|earth-engine-browser|hdf5_hl|mapillary|maplibre-duckdb|maplibre-geoagent|webdggrid|zstd)-/;
+      for (const name of readdirSync(assets)) {
+        if (
+          unused.test(name) ||
+          (name.startsWith("i18n-locale-") && !name.startsWith("i18n-locale-zh-"))
+        ) {
+          rmSync(path.join(assets, name));
+        }
+      }
+      for (const name of [
+        "apple-touch-icon.png",
+        "maskable-icon-512x512.png",
+        "pwa-192x192.png",
+        "pwa-512x512.png",
+        "whitebox-catalog-snapshot.json",
+      ]) {
+        rmSync(path.join(dist, name), { force: true });
+      }
+    },
+  };
+}
+
 function projectUrlQueryPlugin(): Plugin {
   return {
     name: "geolibre-project-url-query",
@@ -919,6 +962,7 @@ export default defineConfig({
     duckdbWasmBundlesPlugin(),
     stripDuckDbWorkerSourcemapPlugin(),
     projectUrlQueryPlugin(),
+    remoteProjectStore(),
     bundledPlugins(path.resolve(__dirname, "public/plugins")),
     copyVectorOps(
       path.resolve(__dirname, "../../backend/geolibre_server/geolibre_server/vector_ops.py"),
@@ -930,6 +974,7 @@ export default defineConfig({
     wmsProxyPlugin(),
     selectiveJsMinifyPlugin(),
     removeJupyterLiteFromTauriDistPlugin(),
+    removeNonSurveyAssetsPlugin(),
     ...pwaPlugin(),
   ],
   clearScreen: false,
@@ -947,6 +992,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    allowedHosts: ["ecohydro.top"],
     watch: {
       // Never watch the Rust side. `tauri dev` runs this dev server as its
       // `beforeDevCommand` and then starts cargo in the same tree, so the
@@ -961,6 +1007,11 @@ export default defineConfig({
       // defaults (node_modules, .git), not a replacement for them.
       ignored: ["**/src-tauri/**"],
     },
+  },
+  preview: {
+    port: 5173,
+    strictPort: true,
+    allowedHosts: ["ecohydro.top"],
   },
   worker: {
     format: "es",

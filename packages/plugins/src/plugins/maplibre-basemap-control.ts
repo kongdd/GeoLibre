@@ -134,7 +134,116 @@ export function setBasemapControlLabels(next: Partial<BasemapControlLabels>): vo
   labels = { ...labels, ...next };
 }
 
+// --- Basemap thumbnail previews -----------------------------------------------
+//
+// The upstream panel renders each entry as a flat row of name / category /
+// attribution — useful but blind: a user cannot tell OSM from OpenTopoMap
+// before clicking. Fetching a small (z=2) XYZ tile for each raster basemap and
+// stamping it on the row gives an at-a-glance preview without ever touching the
+// map.
+//
+// Only raster basemaps with a plain `tiles` template get a preview. Style
+// basemaps (Amazon, Mapbox, MapTiler, OpenFreeMap, ...) swap the whole style
+// on click and have no single-tile endpoint that matches the panel's content;
+// trying to load one would produce a black or auth-failed thumbnail that
+// confuses more than it clarifies. The previews are best-effort: a failed tile
+// load leaves the row unchanged rather than showing a broken image icon, so
+// the panel never blocks the user from selecting a basemap just because the
+// thumbnail could not load.
+const THUMBNAIL_ZOOM = 2; // whole-world; tiny, recognisable
+const THUMBNAIL_X = 1; // mid-Atlantic at z=2
+const THUMBNAIL_Y = 1;
+const PREVIEW_ATTR = "data-geolibre-basemap-preview";
+
+// The catalog of basemaps the upstream control exposes. Cached at activation
+// time so the enhancer does not poke at the control's private fields (which
+// terser may rename across builds). Updated when the user adds a custom
+// basemap via setState/control events.
+let cachedBasemaps: BasemapDefinition[] = [];
+
+function buildRasterPreviewUrl(basemap: BasemapDefinition): string | null {
+  if (basemap.source.type !== "raster") return null;
+  const tiles = basemap.source.tiles;
+  if (!tiles || tiles.length === 0) return null;
+  const template = tiles[0];
+  // Tile URL templates use {z}/{x}/{y} (and sometimes {s} for subdomains).
+  // Reject anything that still carries an unsubstituted API-key placeholder
+  // (e.g. `{api-key}`) so we don't 401 every preview.
+  if (/\{(api-key|access_token|key)\}/.test(template)) return null;
+  return template
+    .replace(/\{z\}/g, String(THUMBNAIL_ZOOM))
+    .replace(/\{x\}/g, String(THUMBNAIL_X))
+    .replace(/\{y\}/g, String(THUMBNAIL_Y))
+    .replace(/\{s\}/g, "a");
+}
+
+function refreshCachedBasemaps(control: BasemapControl | null): void {
+  if (!control) return;
+  const next = (control as unknown as { getBasemaps?: () => BasemapDefinition[] }).getBasemaps?.();
+  if (Array.isArray(next)) cachedBasemaps = next;
+}
+
+function installThumbnailEnhancer(): () => void {
+  if (typeof window === "undefined") return () => {};
+  const root = document.body;
+  if (!root) return () => {};
+
+  const enhance = () => {
+    const rows = root.querySelectorAll<HTMLElement>(
+      `.basemap-control-result:not([${PREVIEW_ATTR}])`,
+    );
+    rows.forEach((row) => {
+      // Upstream writes the id on `data-basemap-id` (HTML attribute names are
+      // case-insensitive); `dataset.basemapId` reflects that. The attribute
+      // selector we use to skip processed rows is case-sensitive on the
+      // literal name, so write/read both via the exact attribute name to keep
+      // them aligned across browsers.
+      const id = row.getAttribute("data-basemap-id");
+      if (!id) {
+        row.setAttribute(PREVIEW_ATTR, "skip");
+        return;
+      }
+      const basemap = cachedBasemaps.find((b) => b.id === id);
+      if (!basemap) {
+        row.setAttribute(PREVIEW_ATTR, "skip");
+        return;
+      }
+      const url = buildRasterPreviewUrl(basemap);
+      row.setAttribute(PREVIEW_ATTR, url ? "ready" : "skip");
+      if (!url) return;
+      const img = document.createElement("img");
+      img.className = "geolibre-basemap-thumbnail";
+      img.alt = "";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.src = url;
+      img.addEventListener(
+        "error",
+        () => {
+          img.remove();
+          row.setAttribute(PREVIEW_ATTR, "failed");
+        },
+        { once: true },
+      );
+      img.addEventListener(
+        "load",
+        () => {
+          row.setAttribute(PREVIEW_ATTR, "loaded");
+        },
+        { once: true },
+      );
+      row.prepend(img);
+    });
+  };
+
+  const observer = new MutationObserver(() => enhance());
+  observer.observe(root, { childList: true, subtree: true });
+  enhance();
+  return () => observer.disconnect();
+}
+
 let basemapControl: BasemapControl | null = null;
+let thumbnailEnhancerCleanup: (() => void) | null = null;
 // GeoLibre layer ids of registered raster basemaps, keyed by basemap id. In
 // multiple mode several raster basemaps can be registered at once.
 const registeredRasterLayers = new Map<string, string>();
@@ -165,8 +274,14 @@ export const maplibreBasemapControlPlugin: GeoLibrePlugin = {
   activate: (app: GeoLibreAppAPI) => {
     if (!basemapControl) {
       basemapControl = new BasemapControl(getBasemapControlOptions(app));
+      // Capture the catalog of basemaps the upstream control knows about so the
+      // thumbnail enhancer can map a rendered row back to its source definition
+      // without poking at the control's private fields (terser may rename them
+      // across builds). Refreshed whenever the user adds a custom basemap.
+      refreshCachedBasemaps(basemapControl);
       basemapControl.on("basemapchange", (event) => {
         handleBasemapChange(app, event);
+        refreshCachedBasemaps(basemapControl);
       });
       basemapControl.on("basemapremove", (event) => {
         handleBasemapRemove(app, event);
@@ -185,6 +300,11 @@ export const maplibreBasemapControlPlugin: GeoLibrePlugin = {
       basemapControl = null;
       return false;
     }
+    // Stamp each raster row with a tiny XYZ tile preview so the user can tell
+    // OSM from OpenTopoMap at a glance. Installed only on activation; the
+    // observer lives until deactivate() removes it.
+    thumbnailEnhancerCleanup?.();
+    thumbnailEnhancerCleanup = installThumbnailEnhancer();
     // Re-link raster basemap layers restored from a reopened project (or kept
     // from a previous activation in this session) so that a later switch to a
     // style basemap or a removal can unregister them (the module state does not
@@ -193,9 +313,8 @@ export const maplibreBasemapControlPlugin: GeoLibrePlugin = {
     // Seed the fresh control instance with every basemap already on the map —
     // the active style basemap plus any stacked rasters we just relinked — so
     // the reopened panel highlights them as active and a re-click on a stacked
-    // raster removes it. Without the raster ids the new instance only knows the
-    // style basemap and shows restored overlays as inactive. When rasters are
-    // stacked the map is in overlay mode, so restore that too.
+    // raster removes it. Multiple mode is the default, allowing raster basemaps
+    // to be stacked instead of silently replacing one another.
     const activeStyleId = getBasemapIdForStyleUrl(app.getActiveBasemap());
     const stackedRasterIds = [...registeredRasterLayers.keys()];
     const activeBasemapIds = [
@@ -206,7 +325,7 @@ export const maplibreBasemapControlPlugin: GeoLibrePlugin = {
     basemapControl.setState({
       activeBasemapId: activeStyleId,
       activeBasemapIds,
-      ...(stackedRasterIds.length > 0 ? { allowMultiple: true } : {}),
+      allowMultiple: true,
     });
     setTimeout(() => basemapControl?.expand(), 0);
   },
@@ -221,6 +340,10 @@ export const maplibreBasemapControlPlugin: GeoLibrePlugin = {
     registeredRasterLayers.clear();
     app.removeMapControl(basemapControl);
     basemapControl = null;
+    // Drop the thumbnail enhancer too: it is keyed to the live `basemapControl`
+    // module state, so leaving it installed across re-activations would leak.
+    thumbnailEnhancerCleanup?.();
+    thumbnailEnhancerCleanup = null;
     // Drop any pending style-failure fallback so a later reactivation cannot
     // act on it against a fresh control instance.
     styleChangeFallback = null;
@@ -244,6 +367,7 @@ function getBasemapControlOptions(app: GeoLibreAppAPI): BasemapControlOptions {
     collapsed: false,
     position: basemapControlPosition,
     title: "Basemaps",
+    allowMultiple: true,
     // Provider basemaps that need a key (the Google/TomTom/HERE traffic overlays
     // and the Amazon Location styles) authenticate with the user's own
     // credentials, read from runtime env. Unset keys are harmless: the basemap
@@ -377,6 +501,17 @@ function handleBasemapRemove(app: GeoLibreAppAPI, event: BasemapControlEventPayl
   registeredRasterLayers.delete(event.basemap.id);
 }
 
+/** Whether a raster covers the map rather than adding labels, traffic, or rail overlays. */
+export function isOpaqueRasterBasemap(basemap: BasemapDefinition): boolean {
+  return (
+    basemap.source.type === "raster" &&
+    basemap.source.googleSession?.overlay !== true &&
+    basemap.category !== "Labels" &&
+    basemap.category !== "Traffic" &&
+    basemap.provider !== "openrailwaymap"
+  );
+}
+
 function registerRasterBasemap(
   app: GeoLibreAppAPI,
   basemap: BasemapDefinition,
@@ -417,6 +552,7 @@ function registerRasterBasemap(
     beforeId: managedRaster.beforeId,
     metadata: {
       basemapId: basemap.id,
+      basemapOpaque: isOpaqueRasterBasemap(basemap),
       basemapProvider: basemap.provider,
       category: basemap.category,
       externalNativeLayer: true,

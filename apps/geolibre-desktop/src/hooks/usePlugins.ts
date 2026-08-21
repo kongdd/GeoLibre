@@ -15,6 +15,7 @@ import {
   type TemporalLayerAdapter,
   setZarrLayerSelector,
   setZarrLocalStoreProvider,
+  fieldSurveyPlugin,
   maplibreAnnotationsPlugin,
   maplibreBasemapControlPlugin,
   maplibreComponentsPlugin,
@@ -182,6 +183,7 @@ manager.registerAll([
   maplibreLayerControlPlugin,
   maplibreGeoEditorPlugin,
   maplibreAnnotationsPlugin,
+  fieldSurveyPlugin,
   maplibreBasemapControlPlugin,
   // The web service plugins (WEB_SERVICE_PLUGIN_IDS) are grouped into the
   // "Web Services" submenu, rendered where the first of them appears in this

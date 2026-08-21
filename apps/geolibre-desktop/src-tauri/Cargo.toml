@@ -74,6 +74,9 @@ getrandom = "0.4"
 # openssl-sys, which has no vendored/cross build for the Android NDK, so the
 # feature is added on every target except Android (the code that uses it is
 # likewise cfg'd out in src/lib.rs).
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-field-media = { path = "vendor/tauri-plugin-field-media" }
+
 [target.'cfg(not(target_os = "android"))'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
 

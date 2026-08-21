@@ -826,6 +826,8 @@ export interface GeoLibreToolbarMenu {
   label: GeoLibreToolbarLabel;
   /** Optional icon: a URL or `data:` URI rendered as an image. */
   icon?: string;
+  /** Keep this menu visible below the desktop breakpoint. Use only for mobile-first workflows. */
+  mobileVisible?: boolean;
   /** Top-level items (actions, separators, or submenus). */
   items: GeoLibreToolbarMenuItem[];
 }

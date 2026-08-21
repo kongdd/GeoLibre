@@ -50,8 +50,8 @@ export function startupDefaultProjection(settings: StartupSettings): MapProjecti
  *
  * - `payload` -- a `?project=`/`?data=` URL owns this launch. Its own loader
  *   brings a projection with it, so nothing here touches preferences.
- * - `restore` -- open this project first, with the shell held back so the map
- *   controller is built from the restored project rather than repaired after.
+ * - `restore` -- open this desktop project first, with the shell held back.
+ * - `workspace` -- restore the browser workspace after a page reload.
  * - `default` -- nothing to restore, so this launch shows the empty workspace in
  *   `projection`. The shell can mount immediately, provided the preference is
  *   applied before the map is created.
@@ -59,6 +59,7 @@ export function startupDefaultProjection(settings: StartupSettings): MapProjecti
 export type StartupPlan =
   | { kind: "payload" }
   | { kind: "restore"; path: string }
+  | { kind: "workspace" }
   | { kind: "default"; projection: MapProjection };
 
 /**
@@ -77,10 +78,13 @@ export type StartupPlan =
 export function planStartup(options: {
   explicitPayload: boolean;
   desktop: boolean;
+  embedded?: boolean;
+  reloading?: boolean;
   settings: StartupSettings;
   recentProjects: readonly RecentPath[];
 }): StartupPlan {
   if (options.explicitPayload) return { kind: "payload" };
+  if (!options.desktop && !options.embedded && options.reloading) return { kind: "workspace" };
   const path = options.desktop
     ? startupProjectPath(options.settings, options.recentProjects)
     : null;
