@@ -87,7 +87,7 @@ import {
   closeFloatingPanel,
   getOpenFloatingPanels,
 } from "@geolibre/plugins";
-import type { MapController } from "@geolibre/map";
+import type { MapEngine } from "@geolibre/map";
 import type {
   GeoLibreCogLayerOptions,
   GeoLibreDeckGL,
@@ -318,7 +318,7 @@ export function subscribeToExternalPluginLoads(listener: () => void): () => void
 // action.
 export async function upgradeExternalPlugin(
   manifestUrl: string,
-  mapControllerRef: RefObject<MapController | null>,
+  mapControllerRef: RefObject<MapEngine | null>,
 ): Promise<void> {
   await reloadExternalUrlPlugin(manager, manifestUrl, createAppAPI(mapControllerRef));
 }
@@ -332,7 +332,7 @@ export async function upgradeExternalPlugin(
 // plugin id.
 export async function installPluginArchive(
   sourcePath: string,
-  mapControllerRef: RefObject<MapController | null>,
+  mapControllerRef: RefObject<MapEngine | null>,
 ): Promise<string> {
   if (!isTauriRuntime()) {
     throw new Error("Installing plugin archives requires the desktop app.");
@@ -359,7 +359,7 @@ export async function installPluginArchive(
 export async function installPluginArchiveFromFile(
   fileName: string,
   bytes: Uint8Array,
-  mapControllerRef: RefObject<MapController | null>,
+  mapControllerRef: RefObject<MapEngine | null>,
 ): Promise<string> {
   return installWebPluginArchive(manager, fileName, bytes, createAppAPI(mapControllerRef));
 }
@@ -367,7 +367,7 @@ export async function installPluginArchiveFromFile(
 // Uninstall a plugin that was installed from a file in the browser.
 export async function uninstallPluginArchiveFromFile(
   pluginId: string,
-  mapControllerRef: RefObject<MapController | null>,
+  mapControllerRef: RefObject<MapEngine | null>,
 ): Promise<void> {
   await uninstallWebPlugin(manager, pluginId, createAppAPI(mapControllerRef));
 }
@@ -480,7 +480,7 @@ export function usePluginRegistry() {
 // plugin menu items on the first pass. This hook additionally kicks off the
 // external plugin scan and reports whether it has finished.
 export function useExternalPluginsReady(
-  mapControllerRef: RefObject<MapController | null>,
+  mapControllerRef: RefObject<MapEngine | null>,
 ): boolean {
   const desktopSettings = useDesktopSettingsStore((state) => state.desktopSettings);
 
@@ -587,7 +587,7 @@ export function useProjectPluginTrust(): ProjectPluginTrustState {
  * View menu, loading a project, or a plugin — not just the toolbar item.
  */
 export function useSwipeSplitViewExclusivity(
-  mapControllerRef: RefObject<MapController | null>,
+  mapControllerRef: RefObject<MapEngine | null>,
 ): void {
   const paneCount = useAppStore((state) => state.mapLayout.rows * state.mapLayout.cols);
 
@@ -738,7 +738,7 @@ function ensureExternalPluginsLoadedWithSettings(
 export function bindTemporalLayer(
   layerId: string,
   adapter: TemporalLayerAdapter,
-  mapControllerRef?: RefObject<MapController | null>,
+  mapControllerRef?: RefObject<MapEngine | null>,
 ): boolean {
   const binding = buildSelectorTimeBinding(adapter.dimension ?? "time", adapter.getTimeValues(), {
     granularity: adapter.granularity,
@@ -775,7 +775,7 @@ export function bindTemporalLayer(
  * @param mapControllerRef - Used to build the app API for activation.
  */
 export function activateTimeSliderForBinding(
-  mapControllerRef?: RefObject<MapController | null>,
+  mapControllerRef?: RefObject<MapEngine | null>,
 ): void {
   if (manager.isActive(TIME_SLIDER_PLUGIN_ID)) return;
   const before = JSON.stringify(projectPluginStateSnapshot());
@@ -810,7 +810,7 @@ export function activateTimeSliderForBinding(
  * Mounted once near the app root so it covers every way a binding can
  * disappear, not just the Layers panel.
  */
-export function useTimeSliderAutoClose(mapControllerRef: RefObject<MapController | null>): void {
+export function useTimeSliderAutoClose(mapControllerRef: RefObject<MapEngine | null>): void {
   useEffect(() => {
     // Subscribed rather than selected from the store so no component re-renders
     // on every layer edit just to run this check.
@@ -835,7 +835,7 @@ export function useTimeSliderAutoClose(mapControllerRef: RefObject<MapController
   }, [mapControllerRef]);
 }
 
-export function createAppAPI(mapControllerRef?: RefObject<MapController | null>) {
+export function createAppAPI(mapControllerRef?: RefObject<MapEngine | null>) {
   const store = useAppStore.getState();
   // Captured so methods that delegate to plugin helpers taking the AppAPI
   // itself (e.g. addCogLayer -> addRasterToMap) can pass `api`. Only read
@@ -1155,24 +1155,24 @@ export function createAppAPI(mapControllerRef?: RefObject<MapController | null>)
       }
     },
     addMapControl: (
-      control: Parameters<MapController["addControl"]>[0],
-      position?: Parameters<MapController["addControl"]>[1],
+      control: Parameters<MapEngine["addControl"]>[0],
+      position?: Parameters<MapEngine["addControl"]>[1],
     ) => mapControllerRef?.current?.addControl(control, position) ?? false,
-    removeMapControl: (control: Parameters<MapController["removeControl"]>[0]) =>
+    removeMapControl: (control: Parameters<MapEngine["removeControl"]>[0]) =>
       mapControllerRef?.current?.removeControl(control),
     setBuiltInMapControlVisible: (
-      control: Parameters<MapController["setBuiltInControlVisible"]>[0],
+      control: Parameters<MapEngine["setBuiltInControlVisible"]>[0],
       visible: boolean,
     ) => mapControllerRef?.current?.setBuiltInControlVisible(control, visible) ?? false,
     setTerrainEnabled: (enabled: boolean) =>
       mapControllerRef?.current?.setTerrainEnabled(enabled) ?? false,
     isTerrainEnabled: () => mapControllerRef?.current?.isTerrainEnabled() ?? false,
     getBuiltInMapControlPosition: (
-      control: Parameters<MapController["getBuiltInControlPosition"]>[0],
+      control: Parameters<MapEngine["getBuiltInControlPosition"]>[0],
     ) => mapControllerRef?.current?.getBuiltInControlPosition(control) ?? "top-right",
     setBuiltInMapControlPosition: (
-      control: Parameters<MapController["setBuiltInControlPosition"]>[0],
-      position: Parameters<MapController["setBuiltInControlPosition"]>[1],
+      control: Parameters<MapEngine["setBuiltInControlPosition"]>[0],
+      position: Parameters<MapEngine["setBuiltInControlPosition"]>[1],
     ) => mapControllerRef?.current?.setBuiltInControlPosition(control, position) ?? false,
     // Hand external plugins GeoLibre's own deck.gl modules so they render on the
     // host's single deck.gl instance (a bundled second copy throws on the

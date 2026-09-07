@@ -9,7 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import * as maplibregl from "maplibre-gl";
 import type { Feature } from "geojson";
-import type { MapController } from "@geolibre/map";
+import type { MapEngine } from "@geolibre/map";
 import {
   currentEditorIdentity,
   editorTrackingFieldNames,
@@ -134,7 +134,7 @@ interface FieldCollectionDialogProps {
   open: boolean;
   openFeature: { layerId: string; featureId: string } | null;
   onOpenChange: (open: boolean) => void;
-  mapControllerRef: React.RefObject<MapController | null>;
+  mapControllerRef: React.RefObject<MapEngine | null>;
   persistProject: (layers?: GeoLibreLayer[]) => Promise<boolean>;
 }
 

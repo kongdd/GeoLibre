@@ -90,7 +90,7 @@ const CAMERA_HANDLERS = [
 ] as const;
 
 export interface MapCanvasProps {
-  controllerRef?: React.MutableRefObject<MapController | null>;
+  controllerRef?: React.MutableRefObject<MapEngine | null>;
   onMapDiagnosticEvent?: (event: MapDiagnosticEvent) => void;
   onControllerReady?: () => void;
   /**

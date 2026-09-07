@@ -5,7 +5,7 @@ import {
   serializeProject,
   useAppStore,
 } from "@geolibre/core";
-import { DEFAULT_BUILT_IN_CONTROL_VISIBILITY, type MapController } from "@geolibre/map";
+import { DEFAULT_BUILT_IN_CONTROL_VISIBILITY, type MapEngine } from "@geolibre/map";
 import {
   closeDuckDBLayerPanel,
   closeEarthEnginePanel,
@@ -183,7 +183,7 @@ import {
 interface TopToolbarProps {
   compact?: boolean;
   diagnosticsErrorCount: number;
-  mapControllerRef: React.RefObject<MapController | null>;
+  mapControllerRef: React.RefObject<MapEngine | null>;
   mapReadyGeneration: number;
   showLabels?: boolean;
   showProjectInfo?: boolean;
