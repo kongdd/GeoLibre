@@ -19,3 +19,6 @@ export const DIMENSIONS_PLUGIN_ID = "maplibre-gl-dimensions";
 
 /** GeoAgent: the AI chat control, whose results sync into the store. */
 export const GEOAGENT_PLUGIN_ID = "maplibre-gl-geoagent";
+
+/** Field collection and live GPS tracking. */
+export const FIELD_SURVEY_PLUGIN_ID = "geolibre-field-survey";

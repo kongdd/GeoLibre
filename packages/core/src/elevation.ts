@@ -26,13 +26,18 @@
 /** A coordinate as `[longitude, latitude]` in degrees. */
 export type LngLat = [number, number];
 
+/** Elevation providers available to callers. */
+export type ElevationSource = "open-meteo" | "trailsplits";
+
 /** Open-Meteo accepts at most 100 coordinates per elevation request. */
 export const MAX_POINTS_PER_REQUEST = 100;
 
 /** Abort an elevation request that has not responded within this window. */
 export const ELEVATION_REQUEST_TIMEOUT_MS = 15000;
 
-const ENDPOINT = "https://api.open-meteo.com/v1/elevation";
+const OPEN_METEO_ENDPOINT = "https://api.open-meteo.com/v1/elevation";
+const TRAILSPLITS_ENDPOINT =
+  "https://api.trailsplits.com/tiles/v1/elevation/current/sample";
 
 /** Error thrown when an elevation request cannot be completed or parsed. */
 export class ElevationFetchError extends Error {
@@ -47,6 +52,7 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 interface ElevationResponse {
   elevation?: number[];
+  points?: Array<{ elevation_m?: number }>;
 }
 
 /**
@@ -54,11 +60,16 @@ interface ElevationResponse {
  *
  * @param points - Coordinates as `[lng, lat]`, at most {@link MAX_POINTS_PER_REQUEST}
  * @param fetchImpl - Optional `fetch` implementation; defaults to the global `fetch`
+ * @param source - Elevation provider; defaults to Open-Meteo GLO-90
  * @returns The elevation in meters for each input coordinate, in the same order
  * @throws {ElevationFetchError} On too many points, a network error, a non-2xx
  *   response, a malformed body, or a length mismatch
  */
-export async function fetchElevations(points: LngLat[], fetchImpl?: FetchLike): Promise<number[]> {
+export async function fetchElevations(
+  points: LngLat[],
+  fetchImpl?: FetchLike,
+  source: ElevationSource = "open-meteo",
+): Promise<number[]> {
   if (points.length === 0) return [];
   if (points.length > MAX_POINTS_PER_REQUEST) {
     throw new ElevationFetchError(
@@ -67,9 +78,14 @@ export async function fetchElevations(points: LngLat[], fetchImpl?: FetchLike): 
   }
 
   const doFetch: FetchLike = fetchImpl ?? ((url, init) => fetch(url, init));
-  const latitudes = points.map((p) => p[1].toFixed(6)).join(",");
-  const longitudes = points.map((p) => p[0].toFixed(6)).join(",");
-  const url = `${ENDPOINT}?latitude=${latitudes}&longitude=${longitudes}`;
+  const url =
+    source === "trailsplits"
+      ? `${TRAILSPLITS_ENDPOINT}?points=${encodeURIComponent(
+          points.map(([lng, lat]) => `${lat.toFixed(6)},${lng.toFixed(6)}`).join("|"),
+        )}`
+      : `${OPEN_METEO_ENDPOINT}?latitude=${points.map((p) => p[1].toFixed(6)).join(",")}&longitude=${points
+          .map((p) => p[0].toFixed(6))
+          .join(",")}`;
 
   // A default fetch never times out, so a hung request would leave the control's
   // busy state stuck with no recovery. Abort after ELEVATION_REQUEST_TIMEOUT_MS
@@ -100,16 +116,18 @@ export async function fetchElevations(points: LngLat[], fetchImpl?: FetchLike): 
     throw new ElevationFetchError("Could not parse the elevation response.");
   }
 
-  if (!data || !Array.isArray(data.elevation)) {
+  const elevations =
+    source === "trailsplits" ? data?.points?.map((point) => point.elevation_m) : data?.elevation;
+  if (!Array.isArray(elevations) || elevations.some((value) => !Number.isFinite(value))) {
     throw new ElevationFetchError("Malformed elevation response.");
   }
-  if (data.elevation.length !== points.length) {
+  if (elevations.length !== points.length) {
     throw new ElevationFetchError(
-      `Expected ${points.length} elevations but received ${data.elevation.length}.`,
+      `Expected ${points.length} elevations but received ${elevations.length}.`,
     );
   }
 
-  return data.elevation;
+  return elevations as number[];
 }
 
 /** The slice of the MapLibre map the terrain sampler needs (stubbed in tests). */

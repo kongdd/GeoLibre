@@ -10,8 +10,8 @@ import { ELEVATION_LINE_PARAM, maybeHandleDeepLink } from "./utils/deep-link";
  *
  * Adds a map control that lets the user draw a line and charts the elevation
  * profile along it — distance, ascent/descent, and min/max stats, a
- * metric/imperial toggle, hover readout, and CSV/SVG export — sampling
- * elevations from the key-less Open-Meteo API. Ported in-house from the
+ * metric/imperial toggle, data-source selector, hover readout, and CSV/SVG
+ * export. Ported in-house from the
  * external `geolibre-elevation-profile` marketplace plugin so it ships as a
  * first-class built-in; the control code is unchanged, only the plugin entry is
  * rebound onto GeoLibre's built-in `GeoLibrePlugin` contract.
@@ -75,6 +75,13 @@ function isPluginState(value: unknown): value is Partial<ElevationProfileState> 
     "unitSystem" in candidate &&
     candidate.unitSystem !== "metric" &&
     candidate.unitSystem !== "imperial"
+  ) {
+    return false;
+  }
+  if (
+    "source" in candidate &&
+    candidate.source !== "open-meteo" &&
+    candidate.source !== "trailsplits"
   ) {
     return false;
   }
@@ -187,6 +194,7 @@ export const maplibreElevationProfilePlugin: GeoLibrePlugin = {
       const cleared: ElevationProfileState = {
         collapsed: false,
         unitSystem: "metric",
+        source: "open-meteo",
         line: null,
         elevations: null,
       };

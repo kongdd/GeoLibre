@@ -77,13 +77,13 @@ describe("nativeGeolocationAvailable", () => {
 // The Android bridge feeds the plugin's `timeout` into LocationRequest as the
 // update interval, so a watch that inherits the one-shot 30 s default only gets
 // a fix twice a minute (the live position and "keep map centered" both freeze
-// in between). These lock the watch to a GNSS-rate interval.
+// in between). These lock the field-survey watch to its requested interval.
 describe("nativeWatchOptions", () => {
-  it("asks for a fix every second, not at the one-shot timeout", () => {
+  it("asks for a fix every three seconds, not at the one-shot timeout", () => {
     const opts = nativeWatchOptions({ enableHighAccuracy: true, maximumAge: 0 });
     // A literal, not NATIVE_WATCH_INTERVAL_MS: comparing the constant with
-    // itself would hold however far the default drifted from a GNSS fix rate.
-    assert.equal(opts.timeout, 1000);
+    // itself would hold however far the requested interval drifted.
+    assert.equal(opts.timeout, 3000);
   });
 
   it("ignores the browser timeout, which means something else entirely", () => {

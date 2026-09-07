@@ -25,6 +25,7 @@
 
 import type { Feature, FeatureCollection, Point } from "geojson";
 import { PHOTO_FULL_PROPERTY, PHOTO_PROPERTY } from "./field-collection";
+import { normalizePhotoBearing } from "./photo-bearing";
 
 /** Image extensions the photo importer recognizes. */
 export const PHOTO_IMAGE_EXTENSIONS = [
@@ -308,6 +309,13 @@ export async function readPhotoLocation(file: Blob): Promise<[number, number] | 
   return coordinate ? [coordinate.lng, coordinate.lat] : null;
 }
 
+/** Read the camera direction recorded in a photo's EXIF GPS block. */
+export async function readPhotoDirection(file: Blob): Promise<number | null> {
+  const exif = await readPhotoExif(file);
+  const direction = exif ? roundTo(exif.GPSImgDirection, 1) : undefined;
+  return direction === undefined ? null : ((direction % 360) + 360) % 360;
+}
+
 /** The image data URLs generated for one photo. */
 interface PhotoImages {
   /** Downscaled JPEG thumbnail (data URL) for the map marker/popup, or null. */
@@ -506,6 +514,56 @@ export async function loadPhotosAtLocation(
     skipped: 0,
     withoutThumbnail,
   };
+}
+
+/** Photos extracted from an insert, ready to hang on a Field Collection observation. */
+export interface ObservationPhotoBatch {
+  photos: string[];
+  photoNames: string[];
+  photoBearings: (number | null)[];
+}
+
+let observationPhotoSink: ((batch: ObservationPhotoBatch) => boolean) | null =
+  null;
+
+/** Field Collection registers a sink while an observation is being edited. */
+export function setObservationPhotoSink(
+  sink: ((batch: ObservationPhotoBatch) => boolean) | null
+): void {
+  observationPhotoSink = sink;
+}
+
+export function observationPhotoSinkActive(): boolean {
+  return observationPhotoSink != null;
+}
+
+/** Pull displayable images out of a geotagged-photo insert result. */
+export function observationPhotosFromResult(
+  result: GeotaggedPhotoResult
+): ObservationPhotoBatch {
+  const photos: string[] = [];
+  const photoNames: string[] = [];
+  const photoBearings: (number | null)[] = [];
+  for (const feature of result.featureCollection.features) {
+    const properties = feature.properties ?? {};
+    const photo =
+      typeof properties[PHOTO_PROPERTY] === "string"
+        ? properties[PHOTO_PROPERTY]
+        : typeof properties[PHOTO_FULL_PROPERTY] === "string"
+          ? properties[PHOTO_FULL_PROPERTY]
+          : "";
+    if (!photo) continue;
+    photos.push(photo);
+    photoNames.push(typeof properties.name === "string" ? properties.name : "");
+    photoBearings.push(normalizePhotoBearing(properties.direction));
+  }
+  return { photos, photoNames, photoBearings };
+}
+
+/** Give the open observation first refusal; true means do not add a photo layer. */
+export function offerObservationPhotos(result: GeotaggedPhotoResult): boolean {
+  const batch = observationPhotosFromResult(result);
+  return batch.photos.length > 0 && (observationPhotoSink?.(batch) ?? false);
 }
 
 /**

@@ -384,6 +384,9 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init());
 
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_field_media::init());
+
     // The Earth Engine OAuth loopback listener is compiled out of the Apple App
     // Store builds (see the module gate at the top of this file); the stub
     // commands are stateless, so the state goes with it.
@@ -424,6 +427,7 @@ pub fn run() {
             allow_raster_asset,
             read_local_file,
             read_project_file,
+            read_survey_photo,
             read_shapefile_siblings,
             resolve_url_redirect,
             read_mbtiles_metadata,
@@ -613,6 +617,9 @@ fn read_project_file(path: String) -> Result<String, String> {
 /// in step.
 // SYNC: VECTOR_FILE_DIALOG_EXTENSIONS in src/lib/tauri-io.ts — grep "SYNC:" to
 // find the partner list and update both together.
+const SURVEY_PHOTO_EXTENSIONS: [&str; 8] =
+    ["jpg", "jpeg", "png", "tif", "tiff", "webp", "heic", "heif"];
+
 const RESTORABLE_VECTOR_EXTENSIONS: [&str; 17] = [
     "geojson",
     "json",
@@ -4900,6 +4907,26 @@ mod tests {
         assert!(is_allowed_local_vector_path("C:/data/roads.gpkg"));
         // Case-insensitive extension; a ".." inside the filename is fine.
         assert!(is_allowed_local_vector_path("/data/v1..2.SHP"));
+    }
+
+    #[test]
+    fn confines_survey_photos_to_the_csv_directory() {
+        assert!(is_allowed_survey_photo_path(
+            "/data/survey/locations.csv",
+            "/data/survey/photos/site.JPG"
+        ));
+        assert!(!is_allowed_survey_photo_path(
+            "/data/survey/locations.csv",
+            "/data/other/site.jpg"
+        ));
+        assert!(!is_allowed_survey_photo_path(
+            "/data/survey/locations.csv",
+            "/data/survey/secret.json"
+        ));
+        assert!(!is_allowed_survey_photo_path(
+            "/data/survey/locations.csv",
+            "/data/survey/../private/site.jpg"
+        ));
     }
 
     #[test]

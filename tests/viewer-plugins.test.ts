@@ -4,6 +4,7 @@ import { maplibreAnnotationsPlugin } from "../packages/plugins/src/plugins/mapli
 import { maplibreGeoEditorPlugin } from "../packages/plugins/src/plugins/maplibre-geo-editor";
 import {
   ANNOTATIONS_PLUGIN_ID,
+  FIELD_SURVEY_PLUGIN_ID,
   GEOAGENT_PLUGIN_ID,
   GEO_EDITOR_PLUGIN_ID,
 } from "../packages/plugins/src/plugin-ids";
@@ -13,7 +14,12 @@ describe("VIEWER_BLOCKED_PLUGIN_IDS", () => {
   it("names every plugin whose on-map control writes to the project", () => {
     assert.deepEqual(
       [...VIEWER_BLOCKED_PLUGIN_IDS].sort(),
-      [ANNOTATIONS_PLUGIN_ID, GEOAGENT_PLUGIN_ID, GEO_EDITOR_PLUGIN_ID].sort(),
+      [
+        ANNOTATIONS_PLUGIN_ID,
+        FIELD_SURVEY_PLUGIN_ID,
+        GEOAGENT_PLUGIN_ID,
+        GEO_EDITOR_PLUGIN_ID,
+      ].sort(),
     );
   });
 

@@ -1,6 +1,11 @@
-import { projectPathLabel, useAppCapability, useAppStore } from "@geolibre/core";
+import { PROJECT_VERSION, projectPathLabel, useAppStore } from "@geolibre/core";
 import {
   Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -10,10 +15,13 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
+  Label,
+  Select,
 } from "@geolibre/ui";
 import {
   BookOpen,
   Bookmark,
+  Cloud,
   Copy,
   FileCode2,
   FileInput,
@@ -25,6 +33,7 @@ import {
   HardDriveDownload,
   History,
   Import,
+  Info,
   LayoutGrid,
   Link2,
   Printer,
@@ -33,25 +42,123 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDesktopSettingsStore } from "../../../hooks/useDesktopSettings";
-import { projectMenuItemCapability } from "../../../lib/deployment-gates";
 import { isMenuItemVisible } from "../../../lib/ui-profile";
 import type { ShareHostStatus } from "../../../lib/share-geolibre";
-import { CapabilityNotice, capabilityNoticeId } from "./CapabilityNotice";
+import {
+  projectDataStorage,
+  remotePhotoQuality,
+  REMOTE_PROJECT_ROOT,
+  type ProjectDataStorage,
+  type RemotePhotoQuality,
+} from "../../../lib/file-names";
+import { fieldCollectionPointStats } from "../../../lib/field-collection";
 import { formatRecentProjectTime, type ToolbarChrome } from "./constants";
-import { useMapCapabilities } from "../../../hooks/useMapCapabilities";
 
 // aria-describedby targets for the "sharing server unavailable" explanation.
 const SHARE_UNAVAILABLE_ID = "project-menu-share-unavailable";
 const GALLERY_UNAVAILABLE_ID = "project-menu-gallery-unavailable";
-// …and for the "your role does not allow this" explanations. One per privilege,
-// not per item: the four save entries share a reason, and aria-describedby may
-// name an id the element does not own.
-const SAVE_DENIED_ID = "project-menu-save-denied";
-const SHARE_DENIED_ID = "project-menu-share-denied";
-const EXPORT_DATA_DENIED_ID = "project-menu-export-data-denied";
-const EXPORT_IMAGE_DENIED_ID = "project-menu-export-image-denied";
+
+function ProjectPropertiesDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const projectName = useAppStore((s) => s.projectName);
+  const projectPath = useAppStore((s) => s.projectPath);
+  const isDirty = useAppStore((s) => s.isDirty);
+  const metadata = useAppStore((s) => s.metadata);
+  const dataStorage = projectDataStorage(metadata);
+  const photoQuality = remotePhotoQuality(metadata);
+  const layers = useAppStore((s) => s.layers);
+  const fieldStats = useMemo(() => fieldCollectionPointStats(layers), [layers]);
+  const groupCount = useAppStore((s) => s.layerGroups.length);
+  const status = projectPath
+    ? t(isDirty ? "projectProperties.modified" : "projectProperties.saved")
+    : t("projectProperties.notSaved");
+  const rows = [
+    [t("projectProperties.name"), projectName],
+    [t("projectProperties.path"), projectPath ?? t("projectProperties.unsavedPath")],
+    [t("projectProperties.formatVersion"), PROJECT_VERSION],
+    [t("projectProperties.status"), status],
+    [t("projectProperties.layers"), String(layers.length)],
+    [t("projectProperties.groups"), String(groupCount)],
+    [t("projectProperties.samplingPoints"), String(fieldStats.points)],
+    [t("projectProperties.pointsWithPhotos"), String(fieldStats.pointsWithPhotos)],
+    [t("projectProperties.photos"), String(fieldStats.photos)],
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg" closeLabel={t("common.close")}>
+        <DialogHeader>
+          <DialogTitle>{t("projectProperties.title")}</DialogTitle>
+          <DialogDescription>{t("projectProperties.description")}</DialogDescription>
+        </DialogHeader>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
+          {rows.map(([label, value]) => (
+            <div key={label} className="contents">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="min-w-0 break-all font-medium" title={value}>
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <div className="space-y-2 border-t pt-4">
+          <Label htmlFor="project-data-storage">{t("projectProperties.dataStorage")}</Label>
+          <Select
+            id="project-data-storage"
+            value={dataStorage}
+            onChange={(event) => {
+              const value = event.target.value as ProjectDataStorage;
+              useAppStore.setState((state) =>
+                projectDataStorage(state.metadata) === value
+                  ? state
+                  : {
+                      metadata: { ...state.metadata, dataStorage: value },
+                      isDirty: true,
+                    },
+              );
+            }}
+          >
+            <option value="local">{t("projectProperties.storageLocal")}</option>
+            <option value="remote">{t("projectProperties.storageRemote")}</option>
+          </Select>
+          {dataStorage === "remote" ? (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {t("projectProperties.remoteStoragePath", { path: REMOTE_PROJECT_ROOT })}
+              </p>
+              <Label htmlFor="remote-photo-quality">
+                {t("projectProperties.remotePhotoQuality")}
+              </Label>
+              <Select
+                id="remote-photo-quality"
+                value={photoQuality}
+                onChange={(event) => {
+                  const value = event.target.value as RemotePhotoQuality;
+                  useAppStore.setState((state) => ({
+                    metadata: { ...state.metadata, remotePhotoQuality: value },
+                    isDirty: true,
+                  }));
+                }}
+              >
+                <option value="original">{t("projectProperties.photoQualityOriginal")}</option>
+                <option value="optimized">{t("projectProperties.photoQualityOptimized")}</option>
+              </Select>
+            </div>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 interface ProjectMenuProps {
   chrome: ToolbarChrome;
@@ -65,6 +172,7 @@ interface ProjectMenuProps {
   shareHostStatus: ShareHostStatus;
   onNewProject: () => void;
   onOpenFromFile: () => void;
+  onOpenFromRemote: () => void;
   onOpenFromUrl: () => void;
   onOpenGallery: () => void;
   onImportQgisProject: () => void;
@@ -89,6 +197,7 @@ export function ProjectMenu({
   shareHostStatus,
   onNewProject,
   onOpenFromFile,
+  onOpenFromRemote,
   onOpenFromUrl,
   onOpenGallery,
   onImportQgisProject,
@@ -106,43 +215,14 @@ export function ProjectMenu({
   onOpenOfflineBasemap,
 }: ProjectMenuProps) {
   const { t } = useTranslation();
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
   const projectPath = useAppStore((s) => s.projectPath);
-  // The offline-region export walks the basemap's style document to collect the
-  // tiles it needs, so it depends on the Style Spec rather than on the renderer.
-  const capabilities = useMapCapabilities();
   const recentProjects = useAppStore((s) => s.recentProjects);
   const forgetRecentProject = useAppStore((s) => s.forgetRecentProject);
   const clearRecentProjects = useAppStore((s) => s.clearRecentProjects);
   const setStorymapPanelOpen = useAppStore((s) => s.setStorymapPanelOpen);
-  const deploymentCapabilities = useAppStore((s) => s.deploymentCapabilities);
   const uiProfile = useDesktopSettingsStore((s) => s.desktopSettings.uiProfile);
-  const saveCapability = useAppCapability("project:save");
-  const shareCapability = useAppCapability("project:share");
-  // Collaboration puts the project on a server outside this machine, the same
-  // thing Share does, so it takes `project:share` too — and
-  // `deployment-gates.ts` classifies `project.collaborate` that way for the
-  // command palette, which has to agree with this.
-  // Everything that gets something back out of the app, split the way the
-  // privilege vocabulary splits it: Export HTML writes the project and its data
-  // into a standalone file and the offline basemap downloads tiles, so both are
-  // `export:data`; the print layout designer exists to produce a rendering, so
-  // it is `export:image`. Share has its own `project:share` above.
-  const exportDataCapability = useAppCapability("export:data");
-  const exportImageCapability = useAppCapability("export:image");
-  // A disabled DropdownMenuItem is `pointer-events-none`, so the reason has to
-  // be a rendered line the item points at, exactly like shareBrokenNote below.
-  const saveDeniedBy = capabilityNoticeId(SAVE_DENIED_ID, saveCapability);
-  const shareDeniedBy = capabilityNoticeId(SHARE_DENIED_ID, shareCapability);
-  const exportDataDeniedBy = capabilityNoticeId(EXPORT_DATA_DENIED_ID, exportDataCapability);
-  const exportImageDeniedBy = capabilityNoticeId(EXPORT_IMAGE_DENIED_ID, exportImageCapability);
-  // Two independent gates, and the deployment's comes first: the interface
-  // profile is a decluttering preference the user can undo, while a capability
-  // the deployment withheld is not on offer at all (issue #1673).
-  const show = (id: string) => {
-    const required = projectMenuItemCapability(id);
-    if (required && !deploymentCapabilities.has(required)) return false;
-    return isMenuItemVisible(uiProfile, id);
-  };
+  const show = (id: string) => isMenuItemVisible(uiProfile, id);
   // A deployment that turned sharing off should not advertise it; one that named
   // a host we rejected should say so rather than leave the user wondering.
   const shareHidden = shareHostStatus === "disabled";
@@ -167,20 +247,6 @@ export function ProjectMenu({
     show("project.saveAsTemplate") ||
     (!shareHidden && show("project.share")) ||
     show("project.exportHtml") ||
-    (collaborationEnabled && show("project.collaborate"));
-  // Narrower than showSaveGroup, which also covers share/export/collaborate: the
-  // `project:save` note must not render when only those siblings are on screen.
-  const showSaveActions =
-    show("project.save") ||
-    show("project.saveAs") ||
-    (show("project.duplicate") && Boolean(onDuplicate)) ||
-    (show("project.saveAsTemplate") && Boolean(onSaveAsTemplate));
-  // The two `export:data` entries sit in different groups, so their shared note
-  // renders at the menu's foot and needs to know whether either is on screen.
-  const showExportDataActions = show("project.exportHtml") || show("project.offlineRegion");
-  // Same for the two `project:share` entries, which straddle Export HTML.
-  const showShareActions =
-    (!shareHidden && show("project.share")) ||
     (collaborationEnabled && show("project.collaborate"));
   const showPrintGroup = show("project.printLayout") || show("project.offlineRegion");
 
@@ -217,6 +283,10 @@ export function ProjectMenu({
               <DropdownMenuItem onSelect={onOpenFromFile}>
                 <FileText className="me-2 h-3.5 w-3.5" />
                 {t("toolbar.item.fileEllipsis")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onOpenFromRemote}>
+                <Cloud className="me-2 h-3.5 w-3.5" />
+                {t("toolbar.item.remoteEllipsis")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={onOpenFromUrl}>
                 <Link2 className="me-2 h-3.5 w-3.5" />
@@ -305,6 +375,12 @@ export function ProjectMenu({
             {t("toolbar.item.projectHistoryEllipsis")}
           </DropdownMenuItem>
         )}
+        {show("project.properties") && (
+          <DropdownMenuItem onSelect={() => setPropertiesOpen(true)}>
+            <Info className="me-2 h-3.5 w-3.5" />
+            {t("toolbar.item.projectPropertiesEllipsis")}
+          </DropdownMenuItem>
+        )}
         {show("project.import") && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
@@ -325,58 +401,35 @@ export function ProjectMenu({
         )}
         {showSaveGroup && <DropdownMenuSeparator />}
         {show("project.save") && (
-          <DropdownMenuItem
-            onSelect={onSave}
-            disabled={!saveCapability.granted}
-            aria-describedby={saveDeniedBy}
-          >
+          <DropdownMenuItem onSelect={onSave}>
             <Save className="me-2 h-3.5 w-3.5" />
             {t("common.save")}
           </DropdownMenuItem>
         )}
         {show("project.saveAs") && (
-          <DropdownMenuItem
-            onSelect={onSaveAs}
-            disabled={!saveCapability.granted}
-            aria-describedby={saveDeniedBy}
-          >
+          <DropdownMenuItem onSelect={onSaveAs}>
             <FilePen className="me-2 h-3.5 w-3.5" />
             {t("toolbar.item.saveAsEllipsis")}
           </DropdownMenuItem>
         )}
         {show("project.duplicate") && onDuplicate && (
-          <DropdownMenuItem
-            onSelect={onDuplicate}
-            disabled={!saveCapability.granted}
-            aria-describedby={saveDeniedBy}
-          >
+          <DropdownMenuItem onSelect={onDuplicate}>
             <Copy className="me-2 h-3.5 w-3.5" />
             {t("toolbar.item.duplicate")}
           </DropdownMenuItem>
         )}
         {show("project.saveAsTemplate") && onSaveAsTemplate && (
-          <DropdownMenuItem
-            onSelect={onSaveAsTemplate}
-            disabled={!saveCapability.granted}
-            aria-describedby={saveDeniedBy}
-          >
+          <DropdownMenuItem onSelect={onSaveAsTemplate}>
             <Bookmark className="me-2 h-3.5 w-3.5" />
             {t("toolbar.item.saveAsTemplateEllipsis")}
           </DropdownMenuItem>
         )}
-        {/* One line for the whole save group, after its last entry: all four
-            items are denied together and each points here. */}
-        {showSaveActions && <CapabilityNotice id={SAVE_DENIED_ID} capability={saveCapability} />}
         {show("project.share") && !shareHidden && (
           <>
             <DropdownMenuItem
               onSelect={onShare}
-              disabled={shareBroken || !shareCapability.granted}
-              aria-describedby={
-                [shareBroken ? SHARE_UNAVAILABLE_ID : undefined, shareDeniedBy]
-                  .filter(Boolean)
-                  .join(" ") || undefined
-              }
+              disabled={shareBroken}
+              aria-describedby={shareBroken ? SHARE_UNAVAILABLE_ID : undefined}
             >
               <Share2 className="me-2 h-3.5 w-3.5" />
               {t("toolbar.item.shareEllipsis")}
@@ -385,48 +438,26 @@ export function ProjectMenu({
           </>
         )}
         {show("project.exportHtml") && (
-          <DropdownMenuItem
-            onSelect={onExportHtml}
-            disabled={!exportDataCapability.granted}
-            aria-describedby={exportDataDeniedBy}
-          >
+          <DropdownMenuItem onSelect={onExportHtml}>
             <FileCode2 className="me-2 h-3.5 w-3.5" />
             {t("toolbar.item.exportHtmlEllipsis")}
           </DropdownMenuItem>
         )}
         {collaborationEnabled && show("project.collaborate") && (
-          <DropdownMenuItem
-            onSelect={onCollaborate}
-            disabled={!shareCapability.granted}
-            aria-describedby={shareDeniedBy}
-          >
+          <DropdownMenuItem onSelect={onCollaborate}>
             <Users className="me-2 h-3.5 w-3.5" />
             {t("toolbar.item.collaborateEllipsis")}
           </DropdownMenuItem>
         )}
-        {/* After Collaborate rather than inside Share's fragment: both point at
-            this note, and Collaborate can be on screen with Share hidden. */}
-        {showShareActions && <CapabilityNotice id={SHARE_DENIED_ID} capability={shareCapability} />}
         {showPrintGroup && <DropdownMenuSeparator />}
         {show("project.printLayout") && (
-          <DropdownMenuItem
-            onSelect={onPrintLayout}
-            // Print layout composes its preview and export from the MapLibre
-            // canvas, so it needs a native map instance rather than merely a
-            // camera (#2268 review).
-            disabled={!capabilities.nativeMapInstance || !exportImageCapability.granted}
-            aria-describedby={exportImageDeniedBy}
-          >
+          <DropdownMenuItem onSelect={onPrintLayout}>
             <Printer className="me-2 h-3.5 w-3.5" />
             {t("toolbar.item.printLayoutEllipsis")}
           </DropdownMenuItem>
         )}
         {show("project.offlineRegion") && (
-          <DropdownMenuItem
-            onSelect={onOpenOfflineBasemap}
-            disabled={!capabilities.styleSpec || !exportDataCapability.granted}
-            aria-describedby={exportDataDeniedBy}
-          >
+          <DropdownMenuItem onSelect={onOpenOfflineBasemap}>
             <HardDriveDownload className="me-2 h-3.5 w-3.5" />
             {t("toolbar.item.offlineBasemapEllipsis")}
           </DropdownMenuItem>
@@ -440,16 +471,8 @@ export function ProjectMenu({
             </DropdownMenuItem>
           </>
         )}
-        {/* One line per export privilege, at the menu's foot: Export HTML and the
-            offline basemap sit either side of a separator, so a note next to one
-            of them would be orphaned when only the other is on screen. */}
-        {showExportDataActions && (
-          <CapabilityNotice id={EXPORT_DATA_DENIED_ID} capability={exportDataCapability} />
-        )}
-        {show("project.printLayout") && (
-          <CapabilityNotice id={EXPORT_IMAGE_DENIED_ID} capability={exportImageCapability} />
-        )}
       </DropdownMenuContent>
+      <ProjectPropertiesDialog open={propertiesOpen} onOpenChange={setPropertiesOpen} />
     </DropdownMenu>
   );
 }

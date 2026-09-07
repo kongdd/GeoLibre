@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 
@@ -16,6 +17,7 @@ def client(tmp_path):
         f"sqlite:///{tmp_path / 'test.db'}",
         public_url="https://share.example",
         storage=FileStorage(str(tmp_path / "objects")),
+        anonymous_projects=False,
     )
     with TestClient(app) as test_client:
         yield test_client
@@ -49,7 +51,11 @@ def create_project(client, token, visibility="public", title="Wetlands"):
 
 
 def test_accounts_login_current_user_and_hashed_secrets(client):
-    assert client.get("/health").json() == {"ok": True, "service": "geolibre-server"}
+    assert client.get("/health").json() == {
+        "ok": True,
+        "service": "geolibre-server",
+        "anonymousProjects": False,
+    }
 
     token = account(client)
     assert client.get("/api/account", headers=auth(token)).json()["account"]["username"] == "ada"
@@ -115,6 +121,53 @@ def test_project_crud_visibility_listing_and_raw_views(client):
     assert historical.json() == json.loads(content)
     assert client.delete(f"/api/projects/{project_id}", headers=auth(owner)).status_code == 204
     assert client.get(f"/api/projects/{project_id}").status_code == 404
+
+
+def test_anonymous_project_folder_externalizes_inline_images(tmp_path):
+    storage_root = tmp_path / "objects"
+    app = create_app(
+        f"sqlite:///{tmp_path / 'anonymous.db'}",
+        public_url="https://share.example",
+        storage=FileStorage(str(storage_root)),
+        anonymous_projects=True,
+    )
+    image = b"\x89PNG\r\n\x1a\nproject-photo"
+    photo = "data:image/png;base64," + base64.b64encode(image).decode()
+    content = json.dumps(
+        {
+            "version": "1.0",
+            "title": "Field survey",
+            "layers": [{"features": [{"properties": {"photo": photo}}]}],
+        }
+    )
+
+    with TestClient(app) as anonymous_client:
+        assert anonymous_client.get("/health").json()["anonymousProjects"] is True
+        response = anonymous_client.post(
+            "/api/projects",
+            json={
+                "filename": "survey.geolibre.json",
+                "content": content,
+                "visibility": "unlisted",
+            },
+        )
+        assert response.status_code == 201, response.text
+        project = response.json()["project"]
+        assert project["username"] == "anonymous"
+
+        raw = anonymous_client.get(project["rawJsonUrl"].removeprefix("https://share.example"))
+        asset_url = raw.json()["layers"][0]["features"][0]["properties"]["photo"]
+        assert asset_url.startswith(
+            f"https://share.example/api/projects/{project['id']}/assets/"
+        )
+        asset = anonymous_client.get(asset_url.removeprefix("https://share.example"))
+        assert asset.status_code == 200
+        assert asset.headers["content-type"] == "image/png"
+        assert asset.content == image
+
+    folder = storage_root / "projects" / project["id"]
+    assert (folder / "project.geolibre.json").is_file()
+    assert len(list((folder / "assets").iterdir())) == 1
 
 
 def test_unlisted_is_hidden_from_listings_but_readable_by_url(client):

@@ -42,9 +42,13 @@ export interface GpsFix {
 
 /** User-tunable logging/capture filters (QGIS-style GPS options). */
 export interface GpsTrackingSettings {
-  /** Minimum meters between logged track fixes. 0 logs every fix. */
+  /** Record after moving this many meters. 0 disables distance-based recording. */
+  recordDistanceM: number;
+  /** Record after this many seconds. 0 disables time-based recording. */
+  recordIntervalS: number;
+  /** Minimum meters between accepted track fixes. 0 disables the filter. */
   minDistanceM: number;
-  /** Minimum seconds between logged track fixes. 0 logs every fix. */
+  /** Minimum seconds between accepted track fixes. 0 disables the filter. */
   minTimeS: number;
   /**
    * Accuracy gate in meters: fixes with a worse (larger) accuracy radius are
@@ -55,6 +59,8 @@ export interface GpsTrackingSettings {
 }
 
 export const DEFAULT_GPS_SETTINGS: GpsTrackingSettings = {
+  recordDistanceM: 100,
+  recordIntervalS: 5,
   minDistanceM: 0,
   minTimeS: 0,
   maxAccuracyM: 0,
@@ -65,9 +71,9 @@ const MAX_MIN_DISTANCE_M = 10_000;
 const MAX_MIN_TIME_S = 3_600;
 const MAX_ACCURACY_M = 100_000;
 
-function clampNumber(raw: unknown, max: number): number {
+function clampNumber(raw: unknown, max: number, fallback = 0): number {
   const n = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 0;
+  if (!Number.isFinite(n) || n < 0) return fallback;
   return Math.min(n, max);
 }
 
@@ -79,6 +85,16 @@ export function normalizeGpsSettings(raw: unknown): GpsTrackingSettings {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_GPS_SETTINGS };
   const r = raw as Record<string, unknown>;
   return {
+    recordDistanceM: clampNumber(
+      r.recordDistanceM,
+      MAX_MIN_DISTANCE_M,
+      DEFAULT_GPS_SETTINGS.recordDistanceM,
+    ),
+    recordIntervalS: clampNumber(
+      r.recordIntervalS,
+      MAX_MIN_TIME_S,
+      DEFAULT_GPS_SETTINGS.recordIntervalS,
+    ),
     minDistanceM: clampNumber(r.minDistanceM, MAX_MIN_DISTANCE_M),
     minTimeS: clampNumber(r.minTimeS, MAX_MIN_TIME_S),
     maxAccuracyM: clampNumber(r.maxAccuracyM, MAX_ACCURACY_M),
@@ -147,8 +163,8 @@ export function fixMeetsAccuracy(fix: GpsFix, settings: GpsTrackingSettings): bo
 
 /**
  * Decide whether `next` should be appended to the track log after `prev` (the
- * last logged fix, or null at the start of a recording). Applies the accuracy
- * gate, then the minimum-time and minimum-distance filters.
+ * last logged fix, or null at the start of a recording). Applies all enabled
+ * filters, then records when either enabled time or distance interval is reached.
  */
 export function shouldLogFix(
   prev: GpsFix | null,
@@ -157,16 +173,18 @@ export function shouldLogFix(
 ): boolean {
   if (!fixMeetsAccuracy(next, settings)) return false;
   if (!prev) return true;
-  if (settings.minTimeS > 0 && next.timestamp - prev.timestamp < settings.minTimeS * 1000) {
-    return false;
-  }
-  if (
-    settings.minDistanceM > 0 &&
-    haversineMeters([prev.lng, prev.lat], [next.lng, next.lat]) < settings.minDistanceM
-  ) {
-    return false;
-  }
-  return true;
+  const elapsedMs = next.timestamp - prev.timestamp;
+  const distanceM = haversineMeters([prev.lng, prev.lat], [next.lng, next.lat]);
+  if (settings.minTimeS > 0 && elapsedMs < settings.minTimeS * 1000) return false;
+  if (settings.minDistanceM > 0 && distanceM < settings.minDistanceM) return false;
+  const timeReached =
+    settings.recordIntervalS > 0 && elapsedMs >= settings.recordIntervalS * 1000;
+  const distanceReached = settings.recordDistanceM > 0 && distanceM >= settings.recordDistanceM;
+  return (
+    (settings.recordIntervalS <= 0 && settings.recordDistanceM <= 0) ||
+    timeReached ||
+    distanceReached
+  );
 }
 
 /**

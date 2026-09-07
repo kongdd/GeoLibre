@@ -20,6 +20,39 @@ export function featureSelectionId(feature: Feature, index: number): string {
   return String(feature.id ?? index);
 }
 
+/** Find the selection id of the source point rendered at `coordinates`. */
+export function pointFeatureSelectionId(
+  features: readonly Feature[],
+  coordinates: readonly number[],
+): string | null {
+  const index = features.findIndex(
+    (feature) =>
+      feature.geometry?.type === "Point" &&
+      feature.geometry.coordinates[0] === coordinates[0] &&
+      feature.geometry.coordinates[1] === coordinates[1],
+  );
+  return index < 0 ? null : featureSelectionId(features[index], index);
+}
+
+/** Find the source point nearest a map click. */
+export function nearestPointFeatureSelectionId(
+  features: readonly Feature[],
+  coordinates: readonly number[],
+): string | null {
+  let nearest = -1;
+  let minDistance = Infinity;
+  features.forEach((feature, index) => {
+    if (feature.geometry?.type !== "Point") return;
+    const [x, y] = feature.geometry.coordinates;
+    const distance = (x - coordinates[0]) ** 2 + (y - coordinates[1]) ** 2;
+    if (distance < minDistance) {
+      nearest = index;
+      minDistance = distance;
+    }
+  });
+  return nearest < 0 ? null : featureSelectionId(features[nearest], nearest);
+}
+
 /**
  * Combines the current selection with a freshly matched id set according to
  * `mode`. The result is deduplicated and order-stable: "new" follows the

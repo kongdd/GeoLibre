@@ -41,6 +41,8 @@ services:
       # POSTGRES_PASSWORD keeps the literal value.
       GEOLIBRE_DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-geolibre}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see docs/getting-started.md)}@postgres:5432/${POSTGRES_DB:-geolibre}"
       GEOLIBRE_STORAGE_PATH: /data/objects
+      # Shared workspace: projects require no account and live in separate folders.
+      GEOLIBRE_ANONYMOUS_PROJECTS: "1"
       GEOLIBRE_PUBLIC_URL: "${GEOLIBRE_SHARE_URL:-http://localhost:8000}"
       GEOLIBRE_VIEWER_URL: "${GEOLIBRE_VIEWER_URL:-http://localhost:8080}"
       GEOLIBRE_CORS_ORIGINS: "${GEOLIBRE_CORS_ORIGINS:-http://localhost:8080}"

@@ -23,6 +23,12 @@
   <dict>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>GeoLibre uses your location to center the map, capture GPS points during Field Collection, and record GPS tracks.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>GeoLibre uses the camera to attach photos to Field Collection observations.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>GeoLibre lets you select photos to attach to Field Collection observations.</string>
+    <key>NSMotionUsageDescription</key>
+    <string>GeoLibre uses device orientation to record the camera azimuth for Field Collection photos.</string>
 
     <!--
       Export compliance. App Store Connect asks about encryption on *every*

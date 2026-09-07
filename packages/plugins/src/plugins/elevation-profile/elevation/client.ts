@@ -1,5 +1,5 @@
 /**
- * Client for the Open-Meteo elevation API (https://open-meteo.com/en/docs/elevation-api).
+ * Client for the elevation-profile providers.
  *
  * The implementation moved to `@geolibre/core` (`core/src/elevation.ts`) so the
  * status-bar pointer readout in `@geolibre/map` can share it — plugins depends
@@ -15,5 +15,6 @@ export {
   ElevationFetchError,
   fetchElevations,
   MAX_POINTS_PER_REQUEST,
+  type ElevationSource,
   type FetchLike,
 } from "@geolibre/core";

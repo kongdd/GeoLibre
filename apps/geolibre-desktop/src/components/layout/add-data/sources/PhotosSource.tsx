@@ -7,6 +7,8 @@ import {
   type GeotaggedPhotoResult,
   loadGeotaggedPhotos,
   loadPhotosAtLocation,
+  observationPhotoSinkActive,
+  offerObservationPhotos,
   relocatePhotoFeatures,
 } from "../../../../lib/geotagged-photos";
 import { pickImageFilesWithFallback } from "../../../../lib/tauri-io";
@@ -56,6 +58,14 @@ export function PhotosSource() {
     const name = source.layerName.trim() || defaultName;
     if (selectedFiles.length === 0) {
       throw new Error(t("addData.photos.errorChooseFiles"));
+    }
+
+    if (observationPhotoSinkActive()) {
+      const attached = await loadPhotosAtLocation(selectedFiles, [0, 0]);
+      if (offerObservationPhotos(attached)) {
+        source.shell.closeDialog();
+        return;
+      }
     }
 
     const result = await loadGeotaggedPhotos(selectedFiles);

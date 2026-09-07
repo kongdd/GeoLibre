@@ -83,6 +83,10 @@ export function setGeoEditorLabels(next: Partial<GeoEditorLabels>): void {
   geoEditorLabels = { ...geoEditorLabels, ...next };
 }
 
+const SAVE_AS_LAYER_SELECTOR = '[data-geolibre-file="save-layer"]';
+const SAVE_AS_LAYER_ICON =
+  '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2 2 7l10 5 10-5-10-5zm0 12L3.7 9.85 2 10.7l10 5 10-5-1.7-.85L12 14zm0 4L3.7 13.85 2 14.7l10 5 10-5-1.7-.85L12 18z" fill="currentColor"/></svg>';
+
 let geoEditorPosition: GeoLibreMapControlPosition = "top-left";
 
 const GEO_EDITOR_OPTIONS = {
@@ -237,6 +241,7 @@ export const maplibreGeoEditorPlugin: GeoLibrePlugin = {
       return false;
     }
 
+    installSaveAsLayerButton(geoEditorControl, app);
     bindSketchesStoreSync();
     void restoreSketchesLayerToEditor();
     setTimeout(() => geoEditorControl?.expand(), 0);
@@ -270,9 +275,43 @@ export const maplibreGeoEditorPlugin: GeoLibrePlugin = {
     app.removeMapControl(geoEditorControl);
     const added = app.addMapControl(geoEditorControl, geoEditorPosition);
     if (!added) return false;
+    installSaveAsLayerButton(geoEditorControl, app);
     setTimeout(() => geoEditorControl?.expand(), 0);
   },
 };
+
+export function saveGeoEditorToNewLayer(
+  control: Pick<GeoEditor, "getAllFeatureCollection">,
+  app: Pick<GeoLibreAppAPI, "addGeoJsonLayer" | "listLayers">
+): string | null {
+  const collection = buildFullExport(control.getAllFeatureCollection()).collection;
+  if (collection.features.length === 0) return null;
+
+  const names = new Set(app.listLayers?.().map((layer) => layer.name) ?? []);
+  const base = "GeoEditor layer";
+  let name = base;
+  for (let index = 2; names.has(name); index += 1) name = `${base} ${index}`;
+  return app.addGeoJsonLayer(name, collection);
+}
+
+function installSaveAsLayerButton(control: GeoEditor, app: GeoLibreAppAPI): void {
+  const fileButtons = app
+    .getMap?.()
+    ?.getContainer()
+    .querySelector<HTMLElement>('.geo-editor-tool-button[data-file="save"]')
+    ?.parentElement;
+  if (!fileButtons || fileButtons.querySelector(SAVE_AS_LAYER_SELECTOR)) return;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "geo-editor-tool-button";
+  button.dataset.geolibreFile = "save-layer";
+  button.title = "Save to new layer";
+  button.setAttribute("aria-label", button.title);
+  button.innerHTML = SAVE_AS_LAYER_ICON;
+  button.addEventListener("click", () => saveGeoEditorToNewLayer(control, app));
+  fileButtons.appendChild(button);
+}
 
 function getGeoEditorOptions(): GeoEditorOptions {
   return {

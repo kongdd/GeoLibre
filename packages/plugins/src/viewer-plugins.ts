@@ -11,7 +11,12 @@
 // Read from `plugin-ids`, not from the plugin modules: `maplibre-geoagent.ts`
 // pulls in `maplibre-gl-earth-engine`, which touches `window` at module load,
 // so importing it here would make this list browser-only.
-import { ANNOTATIONS_PLUGIN_ID, GEOAGENT_PLUGIN_ID, GEO_EDITOR_PLUGIN_ID } from "./plugin-ids";
+import {
+  ANNOTATIONS_PLUGIN_ID,
+  FIELD_SURVEY_PLUGIN_ID,
+  GEOAGENT_PLUGIN_ID,
+  GEO_EDITOR_PLUGIN_ID,
+} from "./plugin-ids";
 
 /**
  * Plugins that must never be active under the viewer preset, because their
@@ -20,6 +25,8 @@ import { ANNOTATIONS_PLUGIN_ID, GEOAGENT_PLUGIN_ID, GEO_EDITOR_PLUGIN_ID } from 
  * - {@link GEO_EDITOR_PLUGIN_ID} — vertex/geometry editing handles.
  * - {@link ANNOTATIONS_PLUGIN_ID} — the drawing toolbar (text, pin, note,
  *   image, arrow, rectangle, ellipse, freehand).
+ * - {@link FIELD_SURVEY_PLUGIN_ID} — field observations and GPS tracks write
+ *   tagged GeoJSON layers into the project.
  * - {@link GEOAGENT_PLUGIN_ID} — an AI chat control whose results are synced
  *   into the store by `geoagent-layer-sync`, which calls `addLayer`,
  *   `updateLayer`, and `removeLayer`. It writes to the project through a
@@ -48,4 +55,5 @@ export const VIEWER_BLOCKED_PLUGIN_IDS: readonly string[] = [
   GEO_EDITOR_PLUGIN_ID,
   ANNOTATIONS_PLUGIN_ID,
   GEOAGENT_PLUGIN_ID,
+  FIELD_SURVEY_PLUGIN_ID,
 ];

@@ -2,26 +2,37 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   DEFAULT_STARTUP_SETTINGS,
+  migrateLegacyStartupDefault,
   normalizeDesktopSettings,
 } from "../apps/geolibre-desktop/src/hooks/useDesktopSettings";
 import {
   planStartup,
   startupDefaultProjection,
-  startupDefaultWorkspace,
   startupProjectPath,
   startupSettingsAfterForcedSaveAs,
 } from "../apps/geolibre-desktop/src/lib/startup-project";
 
 describe("startup project settings", () => {
-  it("defaults to the normal untitled workspace", () => {
+  it("defaults to reopening the most recent project", () => {
     assert.deepEqual(normalizeDesktopSettings({}).startup, {
-      mode: "default",
+      mode: "last",
       projectPath: null,
       projectName: null,
       globeByDefault: true,
-      center: [-100, 40],
-      zoom: 2,
     });
+  });
+
+  it("migrates the old empty-workspace default to reopen-last once", () => {
+    assert.equal(
+      normalizeDesktopSettings(
+        migrateLegacyStartupDefault({ startup: { mode: "default" } }),
+      ).startup.mode,
+      "last",
+    );
+    assert.equal(
+      normalizeDesktopSettings({ startup: { mode: "default" } }).startup.mode,
+      "default",
+    );
   });
 
   it("normalizes a selected startup project", () => {
@@ -32,8 +43,6 @@ describe("startup project settings", () => {
           projectPath: " /tmp/field.geolibre.json ",
           projectName: " Field ",
           globeByDefault: false,
-          center: [-84.388, 33.749],
-          zoom: 10.25,
         },
       }).startup,
       {
@@ -41,8 +50,6 @@ describe("startup project settings", () => {
         projectPath: "/tmp/field.geolibre.json",
         projectName: "Field",
         globeByDefault: false,
-        center: [-84.388, 33.749],
-        zoom: 10.25,
       },
     );
   });
@@ -55,26 +62,17 @@ describe("startup project settings", () => {
     );
   });
 
-  it("normalizes the empty-workspace camera", () => {
-    assert.deepEqual(normalizeDesktopSettings({ startup: {} }).startup.center, [-100, 40]);
-    assert.equal(normalizeDesktopSettings({ startup: {} }).startup.zoom, 2);
-    assert.deepEqual(
-      normalizeDesktopSettings({ startup: { center: [-240, 120], zoom: 30 } }).startup.center,
-      [-180, 90],
-    );
-    assert.equal(
-      normalizeDesktopSettings({ startup: { center: [-84, 34], zoom: -4 } }).startup.zoom,
-      0,
-    );
-  });
-
-  it("rejects a specific mode without a path and unknown modes", () => {
+  it("falls back to the default mode for invalid settings", () => {
     assert.equal(
       normalizeDesktopSettings({ startup: { mode: "specific" } }).startup.mode,
-      "default",
+      "last",
     );
     assert.equal(
       normalizeDesktopSettings({ startup: { mode: "tampered" } }).startup.mode,
+      "last",
+    );
+    assert.equal(
+      normalizeDesktopSettings({ startup: { mode: "default" } }).startup.mode,
       "default",
     );
   });
@@ -86,20 +84,6 @@ describe("startupDefaultProjection", () => {
     assert.equal(
       startupDefaultProjection({ ...DEFAULT_STARTUP_SETTINGS, globeByDefault: false }),
       "mercator",
-    );
-  });
-});
-
-describe("startupDefaultWorkspace", () => {
-  it("uses the configured empty-workspace camera", () => {
-    assert.deepEqual(
-      startupDefaultWorkspace({
-        ...DEFAULT_STARTUP_SETTINGS,
-        globeByDefault: false,
-        center: [-84.388, 33.749],
-        zoom: 11.5,
-      }),
-      { projection: "mercator", center: [-84.388, 33.749], zoom: 11.5 },
     );
   });
 });
@@ -117,24 +101,10 @@ describe("planStartup", () => {
       planStartup({
         explicitPayload: true,
         desktop: true,
-        openedProjectPath: "/tmp/opened.geolibre",
         settings: pinned,
         recentProjects: recent(PINNED),
       }),
       { kind: "payload" },
-    );
-  });
-
-  it("opens an OS-supplied desktop project before the configured startup project", () => {
-    assert.deepEqual(
-      planStartup({
-        explicitPayload: false,
-        desktop: true,
-        openedProjectPath: "/tmp/opened.geolibre",
-        settings: pinned,
-        recentProjects: recent(PINNED),
-      }),
-      { kind: "restore", path: "/tmp/opened.geolibre" },
     );
   });
 
@@ -150,6 +120,21 @@ describe("planStartup", () => {
     );
   });
 
+  it("restores the browser workspace after reload, but not inside an embed", () => {
+    const options = {
+      explicitPayload: false,
+      desktop: false,
+      reloading: true,
+      settings: pinned,
+      recentProjects: [],
+    };
+    assert.deepEqual(planStartup(options), { kind: "workspace" });
+    assert.deepEqual(planStartup({ ...options, embedded: true }), {
+      kind: "default",
+      projection: "globe",
+    });
+  });
+
   it("never restores off the desktop, but still honors the projection there", () => {
     // The browser build and the Jupyter embed have no persistent local file to
     // reopen, so the same pinned preference must not gate their shell -- but the
@@ -162,12 +147,7 @@ describe("planStartup", () => {
           settings: { ...pinned, globeByDefault },
           recentProjects: recent(PINNED),
         }),
-        {
-          kind: "default",
-          projection: globeByDefault ? "globe" : "mercator",
-          center: [-100, 40],
-          zoom: 2,
-        },
+        { kind: "default", projection: globeByDefault ? "globe" : "mercator" },
       );
     }
   });
@@ -181,16 +161,20 @@ describe("planStartup", () => {
         settings: { ...DEFAULT_STARTUP_SETTINGS, mode: "last" },
         recentProjects: [],
       }),
-      { kind: "default", projection: "globe", center: [-100, 40], zoom: 2 },
+      { kind: "default", projection: "globe" },
     );
     assert.deepEqual(
       planStartup({
         explicitPayload: false,
         desktop: true,
-        settings: { ...DEFAULT_STARTUP_SETTINGS, globeByDefault: false },
+        settings: {
+          ...DEFAULT_STARTUP_SETTINGS,
+          mode: "default",
+          globeByDefault: false,
+        },
         recentProjects: recent(PINNED),
       }),
-      { kind: "default", projection: "mercator", center: [-100, 40], zoom: 2 },
+      { kind: "default", projection: "mercator" },
     );
   });
 });
@@ -201,7 +185,10 @@ describe("startupProjectPath", () => {
 
   it("restores nothing in default mode", () => {
     assert.equal(
-      startupProjectPath(DEFAULT_STARTUP_SETTINGS, recent("/tmp/a.geolibre.json")),
+      startupProjectPath(
+        { ...DEFAULT_STARTUP_SETTINGS, mode: "default" },
+        recent("/tmp/a.geolibre.json")
+      ),
       null,
     );
   });
@@ -210,7 +197,6 @@ describe("startupProjectPath", () => {
     assert.equal(
       startupProjectPath(
         {
-          ...DEFAULT_STARTUP_SETTINGS,
           mode: "specific",
           projectPath: "/tmp/pinned.geolibre.json",
           projectName: "Pinned",
@@ -225,7 +211,7 @@ describe("startupProjectPath", () => {
   it("reopens the most recent project in last mode", () => {
     assert.equal(
       startupProjectPath(
-        { ...DEFAULT_STARTUP_SETTINGS, mode: "last" },
+        { mode: "last", projectPath: null, projectName: null, globeByDefault: true },
         recent("/tmp/newest.geolibre.json", "/tmp/older.geolibre.json"),
       ),
       "/tmp/newest.geolibre.json",
@@ -238,7 +224,7 @@ describe("startupProjectPath", () => {
     // setting's own copy ("most recently used local project") does not promise.
     assert.equal(
       startupProjectPath(
-        { ...DEFAULT_STARTUP_SETTINGS, mode: "last" },
+        { mode: "last", projectPath: null, projectName: null, globeByDefault: true },
         recent("https://share.geolibre.app/p/abc", "/tmp/local.geolibre.json"),
       ),
       "/tmp/local.geolibre.json",
@@ -253,7 +239,10 @@ describe("startupProjectPath", () => {
     const uri =
       "content://com.android.externalstorage.documents/document/primary%3ADocuments%2Fjson%2FGeneral_Project.geolibre.json";
     assert.equal(
-      startupProjectPath({ ...DEFAULT_STARTUP_SETTINGS, mode: "last" }, recent(uri)),
+      startupProjectPath(
+        { mode: "last", projectPath: null, projectName: null, globeByDefault: true },
+        recent(uri),
+      ),
       uri,
     );
   });
@@ -261,7 +250,7 @@ describe("startupProjectPath", () => {
   it("restores nothing when every recent project is remote", () => {
     assert.equal(
       startupProjectPath(
-        { ...DEFAULT_STARTUP_SETTINGS, mode: "last" },
+        { mode: "last", projectPath: null, projectName: null, globeByDefault: true },
         recent("https://share.geolibre.app/p/abc"),
       ),
       null,
@@ -269,7 +258,13 @@ describe("startupProjectPath", () => {
   });
 
   it("restores nothing in last mode with no history", () => {
-    assert.equal(startupProjectPath({ ...DEFAULT_STARTUP_SETTINGS, mode: "last" }, []), null);
+    assert.equal(
+      startupProjectPath(
+        { mode: "last", projectPath: null, projectName: null, globeByDefault: true },
+        [],
+      ),
+      null,
+    );
   });
 });
 
@@ -285,21 +280,11 @@ describe("startupSettingsAfterForcedSaveAs", () => {
   it("follows a pinned project to the document the save actually created", () => {
     assert.deepEqual(
       startupSettingsAfterForcedSaveAs(
-        {
-          ...DEFAULT_STARTUP_SETTINGS,
-          mode: "specific",
-          projectPath: PICKED,
-          projectName: "General",
-        },
+        { mode: "specific", projectPath: PICKED, projectName: "General", globeByDefault: true },
         PICKED,
         CREATED,
       ),
-      {
-        ...DEFAULT_STARTUP_SETTINGS,
-        mode: "specific",
-        projectPath: CREATED,
-        projectName: "General",
-      },
+      { mode: "specific", projectPath: CREATED, projectName: "General", globeByDefault: true },
     );
   });
 
@@ -307,7 +292,6 @@ describe("startupSettingsAfterForcedSaveAs", () => {
     assert.equal(
       startupSettingsAfterForcedSaveAs(
         {
-          ...DEFAULT_STARTUP_SETTINGS,
           mode: "specific",
           projectPath: "/tmp/pinned.geolibre.json",
           projectName: "Pinned",
@@ -323,7 +307,7 @@ describe("startupSettingsAfterForcedSaveAs", () => {
   it("does nothing for the modes that resolve a path of their own", () => {
     assert.equal(
       startupSettingsAfterForcedSaveAs(
-        { ...DEFAULT_STARTUP_SETTINGS, mode: "last" },
+        { mode: "last", projectPath: null, projectName: null, globeByDefault: true },
         PICKED,
         CREATED,
       ),
@@ -336,12 +320,7 @@ describe("startupSettingsAfterForcedSaveAs", () => {
     // The desktop case: a plain Save writes the file it opened, every time.
     assert.equal(
       startupSettingsAfterForcedSaveAs(
-        {
-          ...DEFAULT_STARTUP_SETTINGS,
-          mode: "specific",
-          projectPath: PICKED,
-          projectName: "General",
-        },
+        { mode: "specific", projectPath: PICKED, projectName: "General", globeByDefault: true },
         PICKED,
         PICKED,
       ),
@@ -349,12 +328,7 @@ describe("startupSettingsAfterForcedSaveAs", () => {
     );
     assert.equal(
       startupSettingsAfterForcedSaveAs(
-        {
-          ...DEFAULT_STARTUP_SETTINGS,
-          mode: "specific",
-          projectPath: PICKED,
-          projectName: "General",
-        },
+        { mode: "specific", projectPath: PICKED, projectName: "General", globeByDefault: true },
         null,
         CREATED,
       ),

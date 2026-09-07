@@ -67,6 +67,7 @@ export const LOGO_CONTROL_IDS = new Set<ToolbarMapControl>(["logo", "maptoolkit-
 export const NEW_PROJECT_VISIBLE_BUILT_IN_CONTROLS = new Set<BuiltInMapControl>([
   "fullscreen",
   "compass",
+  "geolocate",
   "globe",
   "layer-control",
 ]);

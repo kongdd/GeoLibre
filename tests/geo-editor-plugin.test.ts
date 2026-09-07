@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { FeatureCollection } from "geojson";
 import {
   GEO_EDITOR_PLUGIN_ID,
   hasMassingFeatures,
   isGeomanCommittedDisplayLayer,
   maplibreGeoEditorPlugin as plugin,
   sketchesStyleForMassing,
+  saveGeoEditorToNewLayer,
 } from "../packages/plugins/src/plugins/maplibre-geo-editor";
 import { DEFAULT_LAYER_STYLE, type GeoLibreLayer } from "../packages/core/src";
 
@@ -186,5 +188,43 @@ describe("maplibreGeoEditorPlugin", () => {
     layer.style = sketchesStyleForMassing(layer, massing);
     layer.style = sketchesStyleForMassing(layer, flat);
     assert.deepEqual(layer.style, original);
+  });
+
+  it("saves editor features to a uniquely named layer", () => {
+    const collection: FeatureCollection = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Point", coordinates: [120, 30] },
+        },
+      ],
+    };
+    let saved: { name: string; data: FeatureCollection } | undefined;
+
+    const id = saveGeoEditorToNewLayer(
+      { getAllFeatureCollection: () => collection },
+      {
+        listLayers: () => [
+          {
+            id: "existing",
+            name: "GeoEditor layer",
+            type: "geojson",
+            visible: true,
+            opacity: 1,
+          },
+        ],
+        addGeoJsonLayer: (name, data) => {
+          saved = { name, data };
+          return "new-layer";
+        },
+      }
+    );
+
+    assert.equal(id, "new-layer");
+    assert.equal(saved?.name, "GeoEditor layer 2");
+    assert.deepEqual(saved?.data, collection);
+    assert.notEqual(saved?.data, collection);
   });
 });

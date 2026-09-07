@@ -5,8 +5,7 @@ import {
   serializeProject,
   useAppStore,
 } from "@geolibre/core";
-import { DEFAULT_BUILT_IN_CONTROL_VISIBILITY, type MapEngine } from "@geolibre/map";
-import { useMapCapabilities } from "../../hooks/useMapCapabilities";
+import { DEFAULT_BUILT_IN_CONTROL_VISIBILITY, type MapController } from "@geolibre/map";
 import {
   closeDuckDBLayerPanel,
   closeEarthEnginePanel,
@@ -22,13 +21,15 @@ import {
   openPMTilesLayerPanel,
   openRasterLayerPanel,
   openSplattingLayerPanel,
+  openStacSearchLayerPanel,
   openZarrLayerPanel,
   openThreeDTilesLayerPanel,
   openVectorLayerPanel,
   setAnnotationLabels,
-  setDimensionLabels,
   setBasemapControlLabels,
   setGeoEditorLabels,
+  getActiveBasemapControl,
+  BASEMAP_CONTROL_PLUGIN_ID,
   setGraticuleLabels,
   setH3Labels,
   setS2Labels,
@@ -38,7 +39,6 @@ import {
   setOlcLabels,
   setGeohashLabels,
   setTilecodeLabels,
-  setUsgsNldiLabels,
   setMapillaryLabels,
   setEarthdataGisLabels,
   setOpenAerialMapLabels,
@@ -47,9 +47,14 @@ import {
   setHuggingFaceLabels,
   setSourceCoopLabels,
   setReverseGeocodeLabels,
-  setSamGeoLabels,
+  setFieldSurveyLabels,
+  FIELD_SURVEY_NEW_PROJECT_EVENT,
+  FIELD_SURVEY_OPEN_COLLECTION_EVENT,
+  FIELD_SURVEY_OPEN_GPS_EVENT,
+  FIELD_SURVEY_OPEN_PHOTOS_EVENT,
+  FIELD_SURVEY_OPEN_BASEMAPS_EVENT,
+  FIELD_SURVEY_PLUGIN_ID,
   setStacLabels,
-  STAC_PLUGIN_ID,
   setTimelapseLabels,
   DECK_VIZ_PLUGIN_ID,
   DIRECTIONS_PLUGIN_ID,
@@ -116,16 +121,12 @@ import { KeyboardShortcutsDialog } from "../command/KeyboardShortcutsDialog";
 import { useGlobalShortcuts } from "../../hooks/useGlobalShortcuts";
 import { useViewportHistory } from "../../hooks/useViewportHistory";
 import type { Command } from "../../lib/commands";
-import {
-  filterCommandsByCapabilities,
-  filterCommandsByPrivileges,
-} from "../../lib/deployment-gates";
 import { IS_MAS_BUILD } from "../../lib/build-flags";
 import { pluginDisplayName } from "../../lib/plugin-display-name";
 import { masHidesDataSource } from "../../lib/mas-build";
 import { IS_STORE_BUILD } from "../../lib/updates";
 import { AddDataDialog, type AddDataKind } from "./AddDataDialog";
-import { serviceUrlParameter, type ServiceUrlParameter } from "../../lib/data-url";
+import { serviceUrlParameter } from "../../lib/data-url";
 import {
   OPEN_ADD_DATA_EVENT,
   type OpenAddDataDetail,
@@ -182,7 +183,7 @@ import {
 interface TopToolbarProps {
   compact?: boolean;
   diagnosticsErrorCount: number;
-  mapControllerRef: React.RefObject<MapEngine | null>;
+  mapControllerRef: React.RefObject<MapController | null>;
   mapReadyGeneration: number;
   showLabels?: boolean;
   showProjectInfo?: boolean;
@@ -207,7 +208,6 @@ interface TopToolbarProps {
 /** Translation keys for the reasons a Zarr variable cannot be added. */
 const ZARR_PROBLEM_KEYS = {
   group: "stacPlugin.zarrProblemGroup",
-  missing: "stacPlugin.zarrProblemMissing",
   unauthorized: "stacPlugin.zarrProblemUnauthorized",
   "unsupported-url": "stacPlugin.zarrProblemUnsupportedUrl",
   unavailable: "stacPlugin.zarrProblemUnavailable",
@@ -231,12 +231,18 @@ export function TopToolbar({
   viewer = false,
 }: TopToolbarProps) {
   const { t, i18n } = useTranslation();
-  const deploymentCapabilities = useAppStore((state) => state.deploymentCapabilities);
-  const appPrivileges = useAppStore((state) => state.capabilities.privileges);
   // The reverse-geocode plugin lives in the framework-agnostic plugins package
   // and cannot call t() itself, so push the translated popup strings into it
   // here and refresh them whenever the active language changes.
   useEffect(() => {
+    setFieldSurveyLabels({
+      menu: t("fieldSurvey.menu"),
+      fieldCollection: t("fieldSurvey.fieldCollection"),
+      gpsTracking: t("fieldSurvey.gpsTracking"),
+      insertPhotos: t("fieldSurvey.insertPhotos"),
+      basemaps: t("fieldSurvey.basemaps"),
+      newProject: t("fieldSurvey.newProject"),
+    });
     setReverseGeocodeLabels({
       lookingUp: t("geocode.reverseLookingUp"),
       noAddress: t("geocode.reverseNoAddress"),
@@ -248,8 +254,6 @@ export function TopToolbar({
     });
     setAnnotationLabels({
       toolbar: t("annotations.toolbar"),
-      collapse: t("sharedRail.collapse", { title: t("annotations.toolbar") }),
-      expand: t("sharedRail.expand", { title: t("annotations.toolbar") }),
       layerName: t("annotations.layerName"),
       elementsPanelTitle: t("annotations.elementsPanelTitle"),
       tools: {
@@ -271,10 +275,6 @@ export function TopToolbar({
       },
       deleteLast: t("annotations.deleteLast"),
       clearAll: t("annotations.clearAll"),
-      newLayer: t("annotations.newLayer"),
-      edit: t("annotations.edit"),
-      move: t("annotations.move"),
-      moveToLayer: t("annotations.moveToLayer"),
       textPlaceholder: t("annotations.textPlaceholder"),
       pinTitlePrompt: t("annotations.pinTitlePrompt"),
       pinDescPrompt: t("annotations.pinDescPrompt"),
@@ -284,29 +284,6 @@ export function TopToolbar({
       saveElement: t("annotations.saveElement"),
       atPoint: t("annotations.atPoint"),
       pinnedToExtent: t("annotations.pinnedToExtent"),
-    });
-    setDimensionLabels({
-      toolbar: t("dimensions.toolbar"),
-      collapse: t("sharedRail.collapse", { title: t("dimensions.toolbar") }),
-      expand: t("sharedRail.expand", { title: t("dimensions.toolbar") }),
-      layerName: t("dimensions.layerName"),
-      tools: {
-        linear: t("dimensions.tools.linear"),
-        angular: t("dimensions.tools.angular"),
-      },
-      unit: t("dimensions.unit"),
-      snap: t("dimensions.snap"),
-      color: t("dimensions.color"),
-      width: t("dimensions.width"),
-      widthOptions: {
-        thin: t("dimensions.widthOptions.thin"),
-        medium: t("dimensions.widthOptions.medium"),
-        thick: t("dimensions.widthOptions.thick"),
-      },
-      deleteLast: t("dimensions.deleteLast"),
-      clearAll: t("dimensions.clearAll"),
-      newLayer: t("dimensions.newLayer"),
-      confirmClearAll: (count) => t("dimensions.confirmClearAll", { count }),
     });
     setMapillaryLabels({
       title: t("mapillary.title"),
@@ -874,71 +851,6 @@ export function TopToolbar({
       includeNeighbors: t("geohashPlugin.includeNeighbors"),
       includeParent: t("geohashPlugin.includeParent"),
     });
-    setUsgsNldiLabels({
-      panelTitle: t("usgsNldi.panelTitle"),
-      title: t("usgsNldi.title"),
-      hint: t("usgsNldi.hint"),
-      directionComplete: t("usgsNldi.directionComplete"),
-      directionUp: t("usgsNldi.directionUp"),
-      directionDown: t("usgsNldi.directionDown"),
-      basinButton: t("usgsNldi.basinButton"),
-      navigationPlaceholder: t("usgsNldi.navigationPlaceholder"),
-      navigationUpstreamMain: t("usgsNldi.navigationUpstreamMain"),
-      navigationUpstreamTributaries: t("usgsNldi.navigationUpstreamTributaries"),
-      navigationDownstreamMain: t("usgsNldi.navigationDownstreamMain"),
-      navigationDownstreamDiversions: t("usgsNldi.navigationDownstreamDiversions"),
-      sourcePlaceholder: t("usgsNldi.sourcePlaceholder"),
-      distancePlaceholder: t("usgsNldi.distancePlaceholder"),
-      navigationButton: t("usgsNldi.navigationButton"),
-      navigationButtonAgain: t("usgsNldi.navigationButtonAgain"),
-      exportButton: t("usgsNldi.exportButton"),
-      addLayersButton: t("usgsNldi.addLayersButton"),
-      clearButton: t("usgsNldi.clearButton"),
-      noComid: t("usgsNldi.noComid"),
-      requestingBasin: t("usgsNldi.requestingBasin"),
-      basinRendered: (comid) => t("usgsNldi.basinRendered", { comid }),
-      basinFailed: t("usgsNldi.basinFailed"),
-      selectNavigation: t("usgsNldi.selectNavigation"),
-      invalidDistance: t("usgsNldi.invalidDistance"),
-      discoveringSources: t("usgsNldi.discoveringSources"),
-      navigationUnavailable: t("usgsNldi.navigationUnavailable"),
-      noPlottableSource: t("usgsNldi.noPlottableSource"),
-      navigationEmpty: (source) => t("usgsNldi.navigationEmpty", { source }),
-      navigationAdded: (source, navigation, comid, km) =>
-        t("usgsNldi.navigationAdded", { source, navigation, comid, km }),
-      navigationFailed: t("usgsNldi.navigationFailed"),
-      tracing: t("usgsNldi.tracing"),
-      flowlineRendered: (comid, usedFallback) =>
-        comid
-          ? t(usedFallback ? "usgsNldi.flowlineFallbackComid" : "usgsNldi.flowlineComid", { comid })
-          : t(usedFallback ? "usgsNldi.flowlineFallback" : "usgsNldi.flowline"),
-      requestFailed: t("usgsNldi.requestFailed"),
-      nothingToAdd: t("usgsNldi.nothingToAdd"),
-      layersAdded: (count) => t("usgsNldi.layersAdded", { count }),
-      layerGroupName: t("usgsNldi.layerGroupName"),
-      layerFlowline: t("usgsNldi.layerFlowline"),
-      layerRaindrop: t("usgsNldi.layerRaindrop"),
-      layerSelectedPoint: t("usgsNldi.layerSelectedPoint"),
-      layerBasin: t("usgsNldi.layerBasin"),
-      layerNavigation: (index) => t("usgsNldi.layerNavigation", { index }),
-      resultCleared: t("usgsNldi.resultCleared"),
-      directionalUnavailable: t("usgsNldi.directionalUnavailable"),
-      noFlowlineNearby: t("usgsNldi.noFlowlineNearby"),
-      httpError: (status, detail) =>
-        detail
-          ? t("usgsNldi.httpErrorDetail", { status, detail })
-          : t("usgsNldi.httpError", { status }),
-      noAttributes: t("usgsNldi.noAttributes"),
-      catalogNames: {
-        ca_gages: t("usgsNldi.catalogCaGages"),
-        nwissite: t("usgsNldi.catalogNwisSite"),
-        nwisgw: t("usgsNldi.catalogNwisGw"),
-        gfv11_pois: t("usgsNldi.catalogGfv11Pois"),
-        huc12pp: t("usgsNldi.catalogHuc12pp"),
-        "nmwdi-st": t("usgsNldi.catalogNmwdiSt"),
-        flowlines: t("usgsNldi.catalogFlowlines"),
-      },
-    });
     setTilecodeLabels({
       title: t("tilecodePlugin.title"),
       getTitle: () => i18n.t("tilecodePlugin.title"),
@@ -989,8 +901,6 @@ export function TopToolbar({
     setStacLabels({
       title: t("stacPlugin.title"),
       getTitle: () => i18n.t("stacPlugin.title"),
-      planetTitle: t("toolbar.plugin.geolibre-planet-open-data"),
-      getPlanetTitle: () => i18n.t("toolbar.plugin.geolibre-planet-open-data"),
       footprintLayerName: t("stacPlugin.footprintLayerName"),
       catalogSearch: t("stacPlugin.catalogSearch"),
       catalogSearchPlaceholder: t("stacPlugin.catalogSearchPlaceholder"),
@@ -1072,66 +982,10 @@ export function TopToolbar({
       formatZarr: t("stacPlugin.formatZarr"),
       formatUnknown: t("stacPlugin.formatUnknown"),
       addNoTarget: t("stacPlugin.addNoTarget"),
-      addIcechunkFailed: t("stacPlugin.addIcechunkFailed"),
+      addIcechunk: t("stacPlugin.addIcechunk"),
       zarrProblem: (problem) => t(ZARR_PROBLEM_KEYS[problem]),
       chooseTarget: t("stacPlugin.chooseTarget"),
       notAddable: t("stacPlugin.notAddable"),
-    });
-    setSamGeoLabels({
-      panelTitle: t("samgeoPlugin.panelTitle"),
-      intro: t("samgeoPlugin.intro"),
-      apiUrl: t("samgeoPlugin.apiUrl"),
-      checkConnection: t("samgeoPlugin.checkConnection"),
-      notChecked: t("samgeoPlugin.notChecked"),
-      checking: t("samgeoPlugin.checking"),
-      connected: t("samgeoPlugin.connected"),
-      unavailable: (error) => t("samgeoPlugin.unavailable", { error }),
-      image: t("samgeoPlugin.image"),
-      imageSource: t("samgeoPlugin.imageSource"),
-      imageUpload: t("samgeoPlugin.imageUpload"),
-      noRasterLayers: t("samgeoPlugin.noRasterLayers"),
-      layerUnreadable: t("samgeoPlugin.layerUnreadable"),
-      docsLink: t("samgeoPlugin.docsLink"),
-      mode: t("samgeoPlugin.mode"),
-      modeText: t("samgeoPlugin.modeText"),
-      modePoints: t("samgeoPlugin.modePoints"),
-      modeBox: t("samgeoPlugin.modeBox"),
-      modeAutomatic: t("samgeoPlugin.modeAutomatic"),
-      modelId: t("samgeoPlugin.modelId"),
-      sam2ModelId: t("samgeoPlugin.sam2ModelId"),
-      automaticHint: t("samgeoPlugin.automaticHint"),
-      textPrompt: t("samgeoPlugin.textPrompt"),
-      confidence: t("samgeoPlugin.confidence"),
-      minSize: t("samgeoPlugin.minSize"),
-      maxSize: t("samgeoPlugin.maxSize"),
-      backend: t("samgeoPlugin.backend"),
-      foregroundPoint: t("samgeoPlugin.foregroundPoint"),
-      backgroundPoint: t("samgeoPlugin.backgroundPoint"),
-      clickForeground: t("samgeoPlugin.clickForeground"),
-      clickBackground: t("samgeoPlugin.clickBackground"),
-      pointAdded: t("samgeoPlugin.pointAdded"),
-      drawBox: t("samgeoPlugin.drawBox"),
-      dragBox: t("samgeoPlugin.dragBox"),
-      boxAdded: t("samgeoPlugin.boxAdded"),
-      boxSummary: (box) => t("samgeoPlugin.boxSummary", { box }),
-      noBox: t("samgeoPlugin.noBox"),
-      pointSummary: (foreground, background) =>
-        t("samgeoPlugin.pointSummary", { foreground, background }),
-      pointsPerSide: t("samgeoPlugin.pointsPerSide"),
-      predIou: t("samgeoPlugin.predIou"),
-      stability: t("samgeoPlugin.stability"),
-      clearPrompts: t("samgeoPlugin.clearPrompts"),
-      promptsCleared: t("samgeoPlugin.promptsCleared"),
-      segment: t("samgeoPlugin.segment"),
-      chooseImage: t("samgeoPlugin.chooseImage"),
-      enterPrompt: t("samgeoPlugin.enterPrompt"),
-      addPoint: t("samgeoPlugin.addPoint"),
-      drawBoxFirst: t("samgeoPlugin.drawBoxFirst"),
-      segmenting: t("samgeoPlugin.segmenting"),
-      noObjects: t("samgeoPlugin.noObjects"),
-      added: (count, layer) => t("samgeoPlugin.added", { count, layer }),
-      badResponse: t("samgeoPlugin.badResponse"),
-      unknownProjection: t("samgeoPlugin.unknownProjection"),
     });
   }, [t]);
 
@@ -1146,10 +1000,6 @@ export function TopToolbar({
   const setSegmentationOpen = useAppStore((s) => s.setSegmentationOpen);
   const setObjectDetectionOpen = useAppStore((s) => s.setObjectDetectionOpen);
   const setSegmentEverythingOpen = useAppStore((s) => s.setSegmentEverythingOpen);
-  // The globe owns the primary map, so the MapLibre-only entries below are dead
-  // while it is active and the View menu becomes the only way back to 2D (#2217).
-  const cesiumPrimary = useAppStore((s) => s.primaryRenderer) === "cesium";
-  const capabilities = useMapCapabilities(mapControllerRef);
   const setSqlWorkspaceOpen = useAppStore((s) => s.setSqlWorkspaceOpen);
   const setLoadEditorFeaturesOpen = useAppStore((s) => s.setLoadEditorFeaturesOpen);
   const loadEditorFeaturesOpen = useAppStore((s) => s.ui.loadEditorFeaturesOpen);
@@ -1176,6 +1026,7 @@ export function TopToolbar({
     previewEffectsSettings,
     commitEffectsSettings,
   } = usePluginRegistry();
+  const fieldSurveyActive = isActive(FIELD_SURVEY_PLUGIN_ID);
   // Plugin ids hidden by the active UI profile (issue #500). Recompute only when
   // the profile changes so the Plugins menu can drop them.
   const uiProfile = useDesktopSettingsStore((state) => state.desktopSettings.uiProfile);
@@ -1232,28 +1083,7 @@ export function TopToolbar({
       {} as Record<ToolbarMapControl, boolean>,
     ),
   );
-  // A renderer swap replaces the engine and its controls while this toolbar
-  // keeps its checkbox state. Replay fullscreen once the new engine is ready.
-  useEffect(() => {
-    mapControllerRef.current?.setBuiltInControlVisible("fullscreen", controlsVisible.fullscreen);
-  }, [mapControllerRef, mapReadyGeneration, controlsVisible.fullscreen]);
-
-  const terrainEnabled = useAppStore((state) => state.preferences.map.terrainEnabled);
-
-  // Terrain is project state, unlike the other optional map chrome, so applying
-  // it to the map lives in `useTerrainRestore` (DesktopShell) — this toolbar is
-  // unmounted in `?maponly` embeds and must not own the restore. Only the
-  // checkbox mirrors that state here.
-  useEffect(() => {
-    setControlsVisible((current) =>
-      current.terrain === terrainEnabled ? current : { ...current, terrain: terrainEnabled },
-    );
-  }, [terrainEnabled]);
-  // `keyword` has no deep-link parameter — only the Browser panel's saved CSW
-  // entries carry one — so it widens the parsed shape rather than joining it.
-  const [initialService, setInitialService] = useState<
-    (ServiceUrlParameter & { keyword?: string | null }) | null
-  >(() =>
+  const [initialService, setInitialService] = useState(() =>
     viewer || typeof window === "undefined" ? null : serviceUrlParameter(window.location.search),
   );
   const [addDataKind, setAddDataKind] = useState<AddDataKind | null>(() => {
@@ -1297,19 +1127,6 @@ export function TopToolbar({
       // Reject kinds the Mac App Store build hides so a stray event cannot
       // open a dialog whose backing service is compiled out.
       if (detail?.kind && !masHidesDataSource(detail.kind)) {
-        setInitialService(
-          // An empty string is still a prefill (a saved CSW entry can carry a
-          // keyword and a blank endpoint); only a missing url means "no prefill".
-          detail.url !== undefined
-            ? {
-                kind: detail.kind,
-                url: detail.url,
-                layer: detail.layer ?? null,
-                styleUrl: null,
-                keyword: detail.keyword ?? null,
-              }
-            : null,
-        );
         setAddDataPostgres(detail.postgres);
         setAddDataTargetGroupId(detail.groupId ?? null);
         addDataInitialLayerIdsRef.current = new Set(
@@ -1337,6 +1154,10 @@ export function TopToolbar({
   const [aboutOpen, setAboutOpen] = useState(false);
   const [printLayoutOpen, setPrintLayoutOpen] = useState(false);
   const [fieldCollectionOpen, setFieldCollectionOpen] = useState(false);
+  const [fieldCollectionTarget, setFieldCollectionTarget] = useState<{
+    layerId: string;
+    featureId: string;
+  } | null>(null);
   const [gpsTrackingOpen, setGpsTrackingOpen] = useState(false);
   const [recordTourOpen, setRecordTourOpen] = useState(false);
   const [recordVideoOpen, setRecordVideoOpen] = useState(false);
@@ -1345,6 +1166,57 @@ export function TopToolbar({
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [checkForUpdatesRequest, setCheckForUpdatesRequest] = useState(0);
+
+  useEffect(() => {
+    const openCollection = (event: Event) => {
+      if (viewer || !fieldSurveyActive) return;
+      const detail = (event as CustomEvent<unknown>).detail;
+      setFieldCollectionTarget(
+        detail &&
+          typeof detail === "object" &&
+          typeof (detail as { layerId?: unknown }).layerId === "string" &&
+          typeof (detail as { featureId?: unknown }).featureId === "string"
+          ? (detail as { layerId: string; featureId: string })
+          : null
+      );
+      setFieldCollectionOpen(true);
+    };
+    const openGps = () => {
+      if (!viewer && fieldSurveyActive) setGpsTrackingOpen(true);
+    };
+    const openPhotos = () => {
+      if (!viewer && fieldSurveyActive) openAddDataKind("photos");
+    };
+    const openBasemaps = () => {
+      if (viewer || !fieldSurveyActive) return;
+      if (!isActive(BASEMAP_CONTROL_PLUGIN_ID)) {
+        toggle(BASEMAP_CONTROL_PLUGIN_ID, appApi);
+      } else {
+        getActiveBasemapControl()?.expand();
+      }
+    };
+    const newProject = () => {
+      if (!viewer && fieldSurveyActive) setNewProjectDialogOpen(true);
+    };
+    window.addEventListener(FIELD_SURVEY_OPEN_COLLECTION_EVENT, openCollection);
+    window.addEventListener(FIELD_SURVEY_OPEN_GPS_EVENT, openGps);
+    window.addEventListener(FIELD_SURVEY_OPEN_PHOTOS_EVENT, openPhotos);
+    window.addEventListener(FIELD_SURVEY_OPEN_BASEMAPS_EVENT, openBasemaps);
+    window.addEventListener(FIELD_SURVEY_NEW_PROJECT_EVENT, newProject);
+    return () => {
+      window.removeEventListener(FIELD_SURVEY_OPEN_COLLECTION_EVENT, openCollection);
+      window.removeEventListener(FIELD_SURVEY_OPEN_GPS_EVENT, openGps);
+      window.removeEventListener(FIELD_SURVEY_OPEN_PHOTOS_EVENT, openPhotos);
+      window.removeEventListener(FIELD_SURVEY_OPEN_BASEMAPS_EVENT, openBasemaps);
+      window.removeEventListener(FIELD_SURVEY_NEW_PROJECT_EVENT, newProject);
+    };
+  }, [appApi, fieldSurveyActive, isActive, openAddDataKind, toggle, viewer]);
+
+  useEffect(() => {
+    if (fieldSurveyActive) return;
+    setFieldCollectionOpen(false);
+    setGpsTrackingOpen(false);
+  }, [fieldSurveyActive]);
 
   const resetRuntimeControlsForNewProject = () => {
     closeMaplibreComponentControls(appApi);
@@ -1375,10 +1247,7 @@ export function TopToolbar({
   const addLayer: AddLayerHandlers = {
     vector: () => openVectorLayerPanel(appApi),
     raster: () => openRasterLayerPanel(appApi),
-    stac: () => {
-      if (isActive(STAC_PLUGIN_ID)) openRightPanel(STAC_PLUGIN_ID);
-      else toggle(STAC_PLUGIN_ID, appApi);
-    },
+    stac: () => openStacSearchLayerPanel(appApi),
     flatGeobuf: () => openFlatGeobufAddVectorLayerPanel(appApi),
     pmtiles: () => openPMTilesLayerPanel(appApi),
     zarr: () => openZarrLayerPanel(appApi),
@@ -1391,17 +1260,11 @@ export function TopToolbar({
   const handleOpenPlanetaryComputer = () => openPlanetaryComputerPanel(appApi);
 
   const toggleMapControl = (control: ToolbarMapControl) => {
-    const visible = !controlsVisible[control];
-    const updated = mapControllerRef.current?.setBuiltInControlVisible(control, visible) ?? false;
-    if (!updated) return;
-    setControlsVisible((current) => ({ ...current, [control]: visible }));
-    if (control === "terrain") {
-      const { preferences, setPreferences } = useAppStore.getState();
-      setPreferences({
-        ...preferences,
-        map: { ...preferences.map, terrainEnabled: visible },
-      });
-    }
+    setControlsVisible((current) => {
+      const visible = !current[control];
+      const updated = mapControllerRef.current?.setBuiltInControlVisible(control, visible) ?? false;
+      return updated ? { ...current, [control]: visible } : current;
+    });
   };
 
   // The Maptoolkit logo is Maptoolkit-basemap attribution, required by their
@@ -1514,20 +1377,13 @@ export function TopToolbar({
           },
         ]
       : []),
-    // Print layout renders from the MapLibre canvas; the palette has no disabled
-    // state, so drop the command rather than offer one that opens a dialog which
-    // cannot produce a preview (#2268 review).
-    ...(capabilities.nativeMapInstance
-      ? [
-          {
-            id: "project.print-layout",
-            title: t("toolbar.item.printLayoutEllipsis"),
-            group: t("toolbar.commandGroup.project"),
-            icon: Printer,
-            run: () => setPrintLayoutOpen(true),
-          },
-        ]
-      : []),
+    {
+      id: "project.print-layout",
+      title: t("toolbar.item.printLayoutEllipsis"),
+      group: t("toolbar.commandGroup.project"),
+      icon: Printer,
+      run: () => setPrintLayoutOpen(true),
+    },
     // Add Data
     {
       id: "add.vector",
@@ -1697,29 +1553,22 @@ export function TopToolbar({
             run: () => setSegmentationOpen(true),
           },
         ]),
-    // Both panels read pixels off the MapLibre canvas; the palette has no
-    // disabled state, so drop the commands rather than offer two that silently
-    // do nothing (#2217 review). Gated on the capability, not the engine name.
-    ...(!capabilities.nativeMapInstance
-      ? []
-      : [
-          {
-            id: "proc.objectDetection",
-            title: t("toolbar.command.objectDetection"),
-            group: t("toolbar.commandGroup.processing"),
-            keywords: "object detection yolo onnx ai detect imagery boxes",
-            icon: Sparkles,
-            run: () => setObjectDetectionOpen(true),
-          },
-          {
-            id: "proc.segmentEverything",
-            title: t("toolbar.command.segmentEverything"),
-            group: t("toolbar.commandGroup.processing"),
-            keywords: "segment everything slimsam sam automatic mask imagery polygons",
-            icon: Sparkles,
-            run: () => setSegmentEverythingOpen(true),
-          },
-        ]),
+    {
+      id: "proc.objectDetection",
+      title: t("toolbar.command.objectDetection"),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "object detection yolo onnx ai detect imagery boxes",
+      icon: Sparkles,
+      run: () => setObjectDetectionOpen(true),
+    },
+    {
+      id: "proc.segmentEverything",
+      title: t("toolbar.command.segmentEverything"),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "segment everything slimsam sam automatic mask imagery polygons",
+      icon: Sparkles,
+      run: () => setSegmentEverythingOpen(true),
+    },
     ...CONVERSION_COMMANDS.map(({ kind, titleKey }) => ({
       id: `proc.conversion.${kind}`,
       title: t(titleKey),
@@ -1833,11 +1682,6 @@ export function TopToolbar({
       run: panels.viewState.toggle,
     },
     // View
-    // All eight drive the shared engine's camera, which every engine
-    // implements — so they stay in the palette (and in the shortcut layer and
-    // cheat sheet this array also feeds) whichever renderer is live. They were
-    // dropped on the globe only because the ref was nulled there (#2217); it
-    // now points at the `CesiumEngine` (#2260).
     {
       id: "view.zoom-in",
       title: t("toolbar.command.zoomIn"),
@@ -2012,9 +1856,7 @@ export function TopToolbar({
       )
       .map((plugin) => ({
         id: `plugin.${plugin.id}`,
-        title: t("toolbar.command.togglePlugin", {
-          name: pluginDisplayName(t, plugin),
-        }),
+        title: t("toolbar.command.togglePlugin", { name: pluginDisplayName(t, plugin) }),
         group: t("toolbar.commandGroup.plugins"),
         keywords: isActive(plugin.id) ? "plugin deactivate" : "plugin activate",
         run: () => toggle(plugin.id, appApi),
@@ -2058,29 +1900,9 @@ export function TopToolbar({
   // keyless. Everything else carrying a `shortcut` authors the project
   // (`project.*`, `add.comment`), so filtering to `view.*` drops exactly the
   // authoring keyboard surface.
-  //
-  // Independently of the viewer preset, a withheld capability is withheld
-  // everywhere: the menu gates below only hide or disable menu entries, while
-  // the palette, the cheat sheet, and the shortcut layer call `run()` directly.
-  // Filtering the registry once here is what keeps those three from advertising
-  // and invoking what was denied — and it has to apply both vocabularies, the
-  // deployment's (issue #1673) and the session role's (issue #1672), or the
-  // model gated by whichever one is missing is a UI convention rather than an
-  // access control.
-  const allowedCommands = useMemo(
-    () =>
-      filterCommandsByPrivileges(
-        filterCommandsByCapabilities(commands, deploymentCapabilities),
-        appPrivileges,
-      ),
-    [commands, deploymentCapabilities, appPrivileges],
-  );
   const shortcutCommands = useMemo(
-    () =>
-      viewer
-        ? allowedCommands.filter((command) => command.id.startsWith("view."))
-        : allowedCommands,
-    [allowedCommands, viewer],
+    () => (viewer ? commands.filter((command) => command.id.startsWith("view.")) : commands),
+    [commands, viewer],
   );
   useGlobalShortcuts({
     commands: shortcutCommands,
@@ -2132,6 +1954,7 @@ export function TopToolbar({
           shareHostStatus={shareHost.status}
           onNewProject={() => setNewProjectDialogOpen(true)}
           onOpenFromFile={() => void projectFiles.handleOpenFromFile()}
+          onOpenFromRemote={() => void projectFiles.openRemoteProjects()}
           onOpenFromUrl={() => projectFiles.setProjectUrlDialogOpen(true)}
           onOpenGallery={() => setGalleryDialogOpen(true)}
           onImportQgisProject={() => void projectFiles.handleImportQgisProject()}
@@ -2156,58 +1979,36 @@ export function TopToolbar({
       {!viewer && isMenuVisible(uiProfile, "edit") && (
         <EditMenu chrome={chrome} mapControllerRef={mapControllerRef} />
       )}
-      {/* `|| cesiumPrimary`: an admin or custom profile can hide the whole "view"
-          menu via `hiddenMenus`, which ViewMenu's own item-level override cannot
-          defeat. Hiding it while a project opens with `primaryRenderer: "cesium"`
-          would strand the user on the globe with no path back to MapLibre, so
-          the menu stays mounted there and renders only the Rendering engine
-          submenu (#2217 review). */}
-      {(isMenuVisible(uiProfile, "view") || cesiumPrimary) && (
+      {isMenuVisible(uiProfile, "view") && (
         <ViewMenu
           chrome={chrome}
           history={viewportHistory}
-          // Engine-neutral: the camera comes from `readView()`, and the zoom
-          // limits from the project preferences both engines apply — MapLibre
-          // through `setMinZoom`/`setMaxZoom`, the globe by clamping in
-          // `animateTo`. Reading them off the MapLibre map would report `null`
-          // on the globe and leave Zoom In/Out never showing as "at limit".
           getCamera={() => {
-            const engine = mapControllerRef.current;
-            const view = engine?.readView();
-            if (!view) return null;
-            // Prefer the limits the engine actually enforces: MapLibre's
-            // effective minZoom is raised above the raw preference when
-            // `restrictBounds` is set, so reading the preference alone would
-            // leave Zoom Out enabled at the true floor (#2268 review). The
-            // preference is the fallback for an engine with no native map,
-            // which clamps to it directly.
-            const map = engine?.getMap();
-            const { map: mapPreferences } = useAppStore.getState().preferences;
+            const map = mapControllerRef.current?.getMap();
+            if (!map) return null;
             return {
-              zoom: view.zoom,
-              bearing: view.bearing,
-              pitch: view.pitch,
-              minZoom: map ? map.getMinZoom() : mapPreferences.minZoom,
-              maxZoom: map ? map.getMaxZoom() : mapPreferences.maxZoom,
+              zoom: map.getZoom(),
+              bearing: map.getBearing(),
+              pitch: map.getPitch(),
+              minZoom: map.getMinZoom(),
+              maxZoom: map.getMaxZoom(),
             };
           }}
           onResetNorth={() => mapControllerRef.current?.resetNorth()}
           onResetPitch={() => mapControllerRef.current?.resetPitch()}
           onResetPitchBearing={() => mapControllerRef.current?.resetNorthPitch()}
           onSetView={() => setSetViewOpen(true)}
-          // `readView()`, not `getMap()`: both hand-offs only need a camera, which
-          // every engine reports, and the MapLibre escape hatch is `null` on the
-          // globe — which would have made these silently do nothing now that the
-          // menu no longer greys them out (#2268 review).
           onViewInGoogleEarth={() => {
-            const view = mapControllerRef.current?.readView();
-            if (!view) return;
-            void openExternalLink(googleEarthUrl(view.center[1], view.center[0], view.zoom));
+            const map = mapControllerRef.current?.getMap();
+            if (!map) return;
+            const center = map.getCenter();
+            void openExternalLink(googleEarthUrl(center.lat, center.lng, map.getZoom()));
           }}
           onViewInGoogleMaps={() => {
-            const view = mapControllerRef.current?.readView();
-            if (!view) return;
-            void openExternalLink(googleMapsUrl(view.center[1], view.center[0], view.zoom));
+            const map = mapControllerRef.current?.getMap();
+            if (!map) return;
+            const center = map.getCenter();
+            void openExternalLink(googleMapsUrl(center.lat, center.lng, map.getZoom()));
           }}
           onZoomIn={() => mapControllerRef.current?.zoomIn()}
           onZoomOut={() => mapControllerRef.current?.zoomOut()}
@@ -2217,9 +2018,12 @@ export function TopToolbar({
         open={newProjectDialogOpen}
         onOpenChange={setNewProjectDialogOpen}
         onSaveCurrentProject={projectFiles.handleSave}
-        onProjectCreated={resetRuntimeControlsForNewProject}
+        onProjectCreated={() => {
+          resetRuntimeControlsForNewProject();
+          if (fieldSurveyActive) void projectFiles.persistFieldSurveyProject();
+        }}
       />
-      {!viewer && isMenuVisible(uiProfile, "addData") && deploymentCapabilities.has("data:add") && (
+      {!viewer && isMenuVisible(uiProfile, "addData") && (
         <AddDataMenu
           chrome={chrome}
           addLayer={addLayer}
@@ -2232,17 +2036,15 @@ export function TopToolbar({
           onOpenOsmPbfDialog={() => osmPbf.setDialogOpen(true)}
         />
       )}
-      {!viewer &&
-        isMenuVisible(uiProfile, "processing") &&
-        deploymentCapabilities.has("processing:run") && (
-          <ProcessingMenu
-            chrome={chrome}
-            earthEnginePanel={panels.earthEngine}
-            onOpenNetworkTool={consent.openNetworkTool}
-            onOpenPlanetaryComputer={handleOpenPlanetaryComputer}
-            onOpenGeoreferencer={() => setGeoreferencerOpen(true)}
-          />
-        )}
+      {!viewer && isMenuVisible(uiProfile, "processing") && (
+        <ProcessingMenu
+          chrome={chrome}
+          earthEnginePanel={panels.earthEngine}
+          onOpenNetworkTool={consent.openNetworkTool}
+          onOpenPlanetaryComputer={handleOpenPlanetaryComputer}
+          onOpenGeoreferencer={() => setGeoreferencerOpen(true)}
+        />
+      )}
       {isMenuVisible(uiProfile, "controls") && (
         <ControlsMenu
           chrome={chrome}
@@ -2266,33 +2068,35 @@ export function TopToolbar({
           onTogglePointerElevation={consent.handleTogglePointerElevation}
           onToggleClouds={() => toggle(CLOUDS_PLUGIN_ID, appApi)}
           onTogglePrecipitation={() => toggle(PRECIPITATION_PLUGIN_ID, appApi)}
-          onOpenFieldCollection={() => setFieldCollectionOpen(true)}
-          onOpenGpsTracking={() => setGpsTrackingOpen(true)}
+          onOpenFieldCollection={() => {
+            if (!isActive(FIELD_SURVEY_PLUGIN_ID)) toggle(FIELD_SURVEY_PLUGIN_ID, appApi);
+            if (isActive(FIELD_SURVEY_PLUGIN_ID)) setFieldCollectionOpen(true);
+          }}
+          onOpenGpsTracking={() => {
+            if (!isActive(FIELD_SURVEY_PLUGIN_ID)) toggle(FIELD_SURVEY_PLUGIN_ID, appApi);
+            if (isActive(FIELD_SURVEY_PLUGIN_ID)) setGpsTrackingOpen(true);
+          }}
           onOpenRecordTour={() => setRecordTourOpen(true)}
           onOpenRecordVideo={() => setRecordVideoOpen(true)}
         />
       )}
-      {!viewer &&
-        isMenuVisible(uiProfile, "plugins") &&
-        deploymentCapabilities.has("plugins:install") && (
-          <PluginsMenu
-            chrome={chrome}
-            appApi={appApi}
-            plugins={plugins}
-            isActive={isActive}
-            toggle={toggle}
-            getMapControlPosition={getMapControlPosition}
-            setMapControlPosition={setMapControlPosition}
-            hiddenPluginIds={hiddenPluginIds}
-          />
-        )}
+      {!viewer && isMenuVisible(uiProfile, "plugins") && (
+        <PluginsMenu
+          chrome={chrome}
+          appApi={appApi}
+          plugins={plugins}
+          isActive={isActive}
+          toggle={toggle}
+          getMapControlPosition={getMapControlPosition}
+          setMapControlPosition={setMapControlPosition}
+          hiddenPluginIds={hiddenPluginIds}
+        />
+      )}
       {/* Top-level toolbar menus registered by built-in plugins via
           app.registerToolbarMenu(); external plugin menus render after Help
           (below). Renders nothing when none exist. */}
-      {!viewer && deploymentCapabilities.has("plugins:install") ? (
-        <PluginToolbarMenus chrome={chrome} placement="builtin" />
-      ) : null}
-      {!viewer && deploymentCapabilities.has("settings:manage") ? (
+      {!viewer ? <PluginToolbarMenus chrome={chrome} placement="builtin" /> : null}
+      {!viewer ? (
         <SettingsDialog
           buttonClassName={toolbarButtonClass}
           buttonSize={toolbarButtonSize}
@@ -2324,23 +2128,26 @@ export function TopToolbar({
         onOpenChange={setPrintLayoutOpen}
         mapControllerRef={mapControllerRef}
       />
-      {/* Field Collection and GPS Tracking add features and layers to the
-          project, so they follow the Controls menu entries that open them out
-          of the read-only viewer preset. Record Tour and Record Video below
-          only read the map, so they stay. */}
-      {!viewer && (
+      {!viewer && fieldSurveyActive && (
         <FieldCollectionDialog
+          key={`field-collection-${projectGeneration}`}
           open={fieldCollectionOpen}
-          onOpenChange={setFieldCollectionOpen}
+          openFeature={fieldCollectionTarget}
+          onOpenChange={(next) => {
+            setFieldCollectionOpen(next);
+            if (!next) setFieldCollectionTarget(null);
+          }}
           mapControllerRef={mapControllerRef}
-          mapReadyGeneration={mapReadyGeneration}
+          persistProject={projectFiles.persistFieldSurveyProject}
         />
       )}
-      {!viewer && (
+      {!viewer && fieldSurveyActive && (
         <GpsTrackingDialog
+          key={`gps-tracking-${projectGeneration}`}
           open={gpsTrackingOpen}
           onOpenChange={setGpsTrackingOpen}
           mapControllerRef={mapControllerRef}
+          persistProject={projectFiles.persistFieldSurveyProject}
         />
       )}
       <RecordTourDialog
@@ -2416,9 +2223,7 @@ export function TopToolbar({
       )}
       {/* External plugin toolbar menus render after Help so third-party menus
           sit at the end of the banner, past the built-in menus. */}
-      {!viewer && deploymentCapabilities.has("plugins:install") ? (
-        <PluginToolbarMenus chrome={chrome} placement="external" />
-      ) : null}
+      {!viewer ? <PluginToolbarMenus chrome={chrome} placement="external" /> : null}
       <AddDataDialog
         kind={addDataKind}
         mapControllerRef={mapControllerRef}
@@ -2431,10 +2236,6 @@ export function TopToolbar({
         initialStyleUrl={
           addDataKind === initialService?.kind ? (initialService.styleUrl ?? undefined) : undefined
         }
-        initialKeyword={
-          addDataKind === initialService?.kind ? (initialService.keyword ?? undefined) : undefined
-        }
-        targetGroupId={addDataTargetGroupId}
         onOpenChange={(open: boolean) => {
           if (!open) {
             if (addDataTargetGroupId) {
@@ -2467,14 +2268,14 @@ export function TopToolbar({
       {!viewer && (
         <CommandPalette
           open={commandPaletteOpen}
-          commands={allowedCommands}
+          commands={commands}
           onOpenChange={setCommandPaletteOpen}
         />
       )}
       {!viewer && (
         <KeyboardShortcutsDialog
           open={shortcutsOpen}
-          commands={allowedCommands}
+          commands={commands}
           onOpenChange={setShortcutsOpen}
         />
       )}

@@ -1,4 +1,4 @@
-import type { MapProjection, MapViewState } from "@geolibre/core";
+import type { MapProjection } from "@geolibre/core";
 import type { StartupSettings } from "../hooks/useDesktopSettings";
 
 /**
@@ -45,24 +45,13 @@ export function startupDefaultProjection(settings: StartupSettings): MapProjecti
   return settings.globeByDefault ? "globe" : "mercator";
 }
 
-/** Camera and projection for the empty workspace shown when no project is provided. */
-export function startupDefaultWorkspace(
-  settings: StartupSettings,
-): Pick<MapViewState, "center" | "zoom"> & { projection: MapProjection } {
-  return {
-    projection: startupDefaultProjection(settings),
-    center: [...settings.center],
-    zoom: settings.zoom,
-  };
-}
-
 /**
  * What a launch has to settle before the shell may mount.
  *
  * - `payload` -- a `?project=`/`?data=` URL owns this launch. Its own loader
  *   brings a projection with it, so nothing here touches preferences.
- * - `restore` -- open this project first, with the shell held back so the map
- *   controller is built from the restored project rather than repaired after.
+ * - `restore` -- open this desktop project first, with the shell held back.
+ * - `workspace` -- restore the browser workspace after a page reload.
  * - `default` -- nothing to restore, so this launch shows the empty workspace in
  *   `projection`. The shell can mount immediately, provided the preference is
  *   applied before the map is created.
@@ -70,7 +59,8 @@ export function startupDefaultWorkspace(
 export type StartupPlan =
   | { kind: "payload" }
   | { kind: "restore"; path: string }
-  | ({ kind: "default" } & ReturnType<typeof startupDefaultWorkspace>);
+  | { kind: "workspace" }
+  | { kind: "default"; projection: MapProjection };
 
 /**
  * Decide a launch's startup plan.
@@ -84,25 +74,22 @@ export type StartupPlan =
  * @param desktop - Whether this is the Tauri build. Only it can reopen a local
  *   file; the browser and the Jupyter embed have no persistent path, but they do
  *   honor the empty-workspace projection.
- * @param openedProjectPath - A project supplied by the operating system for
- *   this launch. It takes precedence over desktop startup preferences.
  */
 export function planStartup(options: {
   explicitPayload: boolean;
   desktop: boolean;
-  openedProjectPath?: string | null;
+  embedded?: boolean;
+  reloading?: boolean;
   settings: StartupSettings;
   recentProjects: readonly RecentPath[];
 }): StartupPlan {
   if (options.explicitPayload) return { kind: "payload" };
-  if (options.desktop && options.openedProjectPath) {
-    return { kind: "restore", path: options.openedProjectPath };
-  }
+  if (!options.desktop && !options.embedded && options.reloading) return { kind: "workspace" };
   const path = options.desktop
     ? startupProjectPath(options.settings, options.recentProjects)
     : null;
   if (path) return { kind: "restore", path };
-  return { kind: "default", ...startupDefaultWorkspace(options.settings) };
+  return { kind: "default", projection: startupDefaultProjection(options.settings) };
 }
 
 /**

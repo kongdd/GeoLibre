@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { DEFAULT_LAYER_STYLE, type GeoLibreLayer, useAppStore } from "@geolibre/core";
+import { DEFAULT_BASEMAPS } from "maplibre-gl-basemap-control";
 import {
   BASEMAP_CONTROL_PLUGIN_ID,
   getActiveBasemapControl,
+  isOpaqueRasterBasemap,
   maplibreBasemapControlPlugin as plugin,
 } from "../packages/plugins/src/plugins/maplibre-basemap-control";
 import type { GeoLibreAppAPI } from "../packages/plugins/src/types";
@@ -53,6 +55,20 @@ describe("maplibreBasemapControlPlugin lifecycle", () => {
 
   it("has the exported id", () => {
     assert.equal(plugin.id, BASEMAP_CONTROL_PLUGIN_ID);
+  });
+
+  it("distinguishes covering basemaps from transparent overlays", () => {
+    const byId = (id: string) => DEFAULT_BASEMAPS.find((basemap) => basemap.id === id)!;
+    assert.equal(isOpaqueRasterBasemap(byId("osm-standard")), true);
+    assert.equal(isOpaqueRasterBasemap(byId("google-hybrid")), true);
+    assert.equal(isOpaqueRasterBasemap(byId("carto-positron-only-labels")), false);
+    assert.equal(isOpaqueRasterBasemap(byId("google-traffic")), false);
+    assert.equal(isOpaqueRasterBasemap(byId("openrailwaymap")), false);
+  });
+
+  it("allows multiple raster basemaps by default", () => {
+    plugin.activate(fakeApp([]));
+    assert.equal(getActiveBasemapControl()?.getState().allowMultiple, true);
   });
 
   it("keeps stacked raster basemaps in the store when deactivated", () => {

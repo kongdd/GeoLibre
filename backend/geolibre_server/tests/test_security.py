@@ -36,6 +36,58 @@ def test_no_token_env_leaves_endpoints_open(monkeypatch: pytest.MonkeyPatch) -> 
     assert client.get("/algorithms").status_code == 200
 
 
+def test_remote_project_save_is_confined_and_atomic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Browser saves write only a validated file name under the configured root."""
+    root = tmp_path / "remote"
+    monkeypatch.setenv("GEOLIBRE_REMOTE_PROJECT_ROOT", str(root))
+    main = _reload_app(monkeypatch, None)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/project/save",
+        params={"name": "survey/survey.geolibre.json"},
+        content=b'{"name":"survey"}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"path": str(root / "survey" / "survey.geolibre.json")}
+    assert (root / "survey" / "survey.geolibre.json").read_text() == '{"name":"survey"}'
+    assert list(root.rglob("*.tmp")) == []
+
+    photo = client.post(
+        "/project/save",
+        params={"name": "survey/images/a.jpg"},
+        content=b"jpeg-bytes",
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert photo.status_code == 200
+    assert (root / "survey" / "images" / "a.jpg").read_bytes() == b"jpeg-bytes"
+    assert client.get("/project/list").json() == {
+        "projects": ["survey/survey.geolibre.json"]
+    }
+    assert (
+        client.get(
+            "/project/read", params={"name": "survey/survey.geolibre.json"}
+        ).content
+        == b'{"name":"survey"}'
+    )
+    assert (
+        client.get("/project/read", params={"name": "survey/images/a.jpg"}).content
+        == b"jpeg-bytes"
+    )
+
+    escaped = client.post(
+        "/project/save",
+        params={"name": "../escape.json"},
+        content=b"{}",
+        headers={"Content-Type": "application/json"},
+    )
+    assert escaped.status_code == 400
+    assert not (tmp_path / "escape.json").exists()
+
+
 def test_token_required_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     """With a token set, work endpoints demand it; /health stays exempt."""
     main = _reload_app(monkeypatch, "s3cr3t")

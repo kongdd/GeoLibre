@@ -24,6 +24,7 @@ import {
 import { profileToCsv } from "../packages/plugins/src/plugins/elevation-profile/export/csv";
 import { buildChartGeometry } from "../packages/plugins/src/plugins/elevation-profile/chart/profileChart";
 import { selectedProfileLine } from "../packages/plugins/src/plugins/elevation-profile/elevation/selection";
+import { ElevationProfileControl } from "../packages/plugins/src/plugins/elevation-profile/core/ElevationProfileControl";
 import {
   encodeLine,
   parseLine,
@@ -372,7 +373,7 @@ describe("elevation-profile deep link", () => {
   });
 });
 
-describe("elevation-profile Open-Meteo client", () => {
+describe("elevation-profile provider client", () => {
   const stubFetch =
     (body: unknown, status = 200): FetchLike =>
     () =>
@@ -388,7 +389,7 @@ describe("elevation-profile Open-Meteo client", () => {
     assert.equal(called, false);
   });
 
-  it("parses the elevation array on success", async () => {
+  it("parses the Open-Meteo elevation array on success", async () => {
     const result = await fetchElevations(
       [
         [13.4, 52.5],
@@ -397,6 +398,32 @@ describe("elevation-profile Open-Meteo client", () => {
       stubFetch({ elevation: [34, 512] }),
     );
     assert.deepEqual(result, [34, 512]);
+  });
+
+  it("queries TrailSplits in lat/lng order and parses its points", async () => {
+    let requestedUrl = "";
+    const result = await fetchElevations(
+      [
+        [13.4, 52.5],
+        [8.2, 46.8],
+      ],
+      (url) => {
+        requestedUrl = decodeURIComponent(url);
+        return Promise.resolve(
+          new Response(JSON.stringify({ points: [{ elevation_m: 35.5 }, { elevation_m: 513 }] })),
+        );
+      },
+      "trailsplits",
+    );
+    assert.match(requestedUrl, /points=52\.500000,13\.400000\|46\.800000,8\.200000$/);
+    assert.deepEqual(result, [35.5, 513]);
+  });
+
+  it("persists the selected provider in control state", () => {
+    const control = new ElevationProfileControl();
+    assert.equal(control.getState().source, "open-meteo");
+    control.setState({ source: "trailsplits" });
+    assert.equal(control.getState().source, "trailsplits");
   });
 
   it("rejects when too many points are requested", async () => {
