@@ -890,7 +890,7 @@ export function DesktopShell({
   // the Collaborate dialog and the on-canvas status badge share one socket, and
   // so the dialog stays mounted in toolbar-hidden layouts.
   const collaboration = useCollaboration(mapControllerRef);
-  const commentTool = useCommentTool({ mapControllerRef, collaboration });
+  const commentTool = useCommentTool({ mapControllerRef, collaboration, mapReadyGeneration });
   const [showResolvedComments, setShowResolvedComments] = useState(false);
   const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null);
   const collaborateDialogOpen = useAppStore((s) => s.ui.collaborateDialogOpen);
@@ -909,11 +909,11 @@ export function DesktopShell({
   useEmbedBridge(mapControllerRef);
   // Request/reply + event channel backing the Python scripting API (live
   // queries, processing, map events). Also inert when not embedded.
-  useCommandBridge(mapControllerRef);
+  useCommandBridge(mapControllerRef, mapReadyGeneration);
   // Runtime postMessage API for a third-party host page that frames the app
   // (fly to a record, highlight it, open a tool; selection/view/tool events back
   // out). Off unless the deployment configured GEOLIBRE_EMBED_ORIGINS.
-  useEmbedApi(mapControllerRef, mapAppAPI);
+  useEmbedApi(mapControllerRef, mapAppAPI, mapReadyGeneration);
   // Same scripting surface, reached over the desktop Jupyter server's relay, so
   // a kernel driven from an EXTERNAL client (VS Code's Jupyter extension) can
   // control the map too. Inert until that server is running.
@@ -2341,6 +2341,7 @@ export function DesktopShell({
                       collapsed={collapsed}
                       onCollapsedChange={onCollapsedChange}
                       hideOwnRail
+                      themeMode={themeMode}
                     />
                   )}
                 />
@@ -2348,7 +2349,7 @@ export function DesktopShell({
             ) : layoutOptions.layerPanelVisible ? (
               <SectionErrorBoundary label="Layer panel" displayName={t("shell.section.layerPanel")}>
                 {layoutOptions.viewer ? (
-                  <ViewerLayerPanel />
+                  <ViewerLayerPanel mapControllerRef={mapControllerRef} />
                 ) : (
                   <LayerPanel
                     mapControllerRef={mapControllerRef}
@@ -2368,6 +2369,7 @@ export function DesktopShell({
                       layoutOptions.panelsCollapsed ||
                       autoCollapsedPanel === "layers"
                     }
+                    themeMode={themeMode}
                   />
                 )}
               </SectionErrorBoundary>
@@ -2656,6 +2658,7 @@ export function DesktopShell({
                 onResizeStart={startNotebookPanelResize}
                 mapControllerRef={mapControllerRef}
                 themeMode={themeMode}
+                mapReadyGeneration={mapReadyGeneration}
               />
             </Suspense>
           </SectionErrorBoundary>

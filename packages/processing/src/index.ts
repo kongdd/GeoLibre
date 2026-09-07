@@ -45,10 +45,9 @@ export {
   kernelDensityTool,
   emergingHotSpotTool,
   emergingPattern,
+  numericFieldValue,
 } from "./statistics-tools";
 export {
-  H3_TOOLS,
-  getH3Tool,
   buildBinSql,
   buildGridFromBboxSql,
   buildH3CompactSql,
@@ -256,6 +255,9 @@ export {
   type WhiteboxStatus,
   type WhiteboxTool,
   type WhiteboxToolParameter,
+  LOCAL_SIDECAR_URL,
+  setSidecarFetch,
+  isMultipleWhiteboxDatasetParameter,
 } from "./sidecar-client";
 export {
   runWhiteboxToolWasm,
@@ -284,6 +286,7 @@ export {
   type CogWasmCompression,
   type ConvertGeoTiffToCogOptions,
   type GeoTiffInfo,
+  convertRasterDataToCog,
 } from "./cog-convert";
 export {
   convertVectorWithWasm,

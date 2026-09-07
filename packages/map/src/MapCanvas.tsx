@@ -44,6 +44,7 @@ import {
 } from "./feature-selection";
 import { isGlobeControlToggleClick } from "./globe-control-toggle";
 import { createMapController, type MapController } from "./map-controller";
+import type { MapEngine } from "./map-engine";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "maplibre-gl-layer-control/style.css";
 import "./layer-control-overrides.css";

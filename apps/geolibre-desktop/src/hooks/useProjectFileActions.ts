@@ -129,7 +129,23 @@ export interface EmbedVectorDataPrompt {
   desktop: boolean;
   /** Project generation that opened the prompt. */
   projectGeneration: number;
+  /** Desktop hosts can offer file-reference as a third option. */
+  allowFileReferences: boolean;
   resolve: (choice: "embed" | "noembed" | "cancel") => void;
+}
+
+/**
+ * Browser drag-drop of a `.geolibre` project file is a one-way trip: the loaded
+ * project immediately replaces the current one, with no chance for the user
+ * to cancel. Once the user has typed something in, "discard" would be
+ * irreversible — so we ask first, and let them save to keep their edits.
+ */
+export interface DroppedProjectPrompt {
+  /** Path of the dropped file, if known (null for raw drops in the web build). */
+  path: string | null;
+  /** Bytes of the dropped file content, already read. */
+  text: string;
+  resolve: (choice: "cancel" | "discard" | "save") => void;
 }
 
 /**
@@ -299,6 +315,10 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   );
   const [saveNamePrompt, setSaveNamePrompt] = useState<SaveNamePrompt | null>(null);
   const [saveNameInput, setSaveNameInput] = useState("");
+  const [droppedProjectPrompt, setDroppedProjectPrompt] = useState<DroppedProjectPrompt | null>(
+    null,
+  );
+  const [droppedProjectSaving, setDroppedProjectSaving] = useState(false);
   const projectUrlAbortRef = useRef<AbortController | null>(null);
   const recentAbortRef = useRef<AbortController | null>(null);
   // Separate from projectUrlAbortRef so a gallery open and an Open-from-URL
@@ -998,19 +1018,38 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     bytes: number,
     desktop: boolean,
     promptProjectGeneration: number,
+    allowFileReferences: boolean,
   ) =>
-    new Promise<"embed" | "noembed" | "cancel">((resolve) => {
+    new Promise<"embed" | "noembed" | "cancel" | "fileref">((resolve) => {
       setEmbedVectorDataPrompt({
         count,
         bytes,
         desktop,
         projectGeneration: promptProjectGeneration,
+        allowFileReferences,
         resolve,
       });
     });
 
-  const resolveEmbedVectorDataPrompt = (choice: "embed" | "noembed" | "cancel") =>
+  const resolveEmbedVectorDataPrompt = (choice: "embed" | "noembed" | "cancel" | "fileref") => {
+    if (choice === "fileref") {
+      // File-reference option isn't wired through the legacy save path; treat
+      // it as a no-embed so the existing save pipeline still runs.
+      settleEmbedVectorDataPrompt(embedVectorDataPrompt, "noembed");
+      return;
+    }
     settleEmbedVectorDataPrompt(embedVectorDataPrompt, choice);
+  };
+
+  const resolveDroppedProjectPrompt = (choice: "cancel" | "discard" | "save") => {
+    droppedProjectPrompt?.resolve(choice);
+    setDroppedProjectPrompt(null);
+  };
+
+  const promptDroppedProject = (path: string | null, text: string) =>
+    new Promise<"cancel" | "discard" | "save">((resolve) => {
+      setDroppedProjectPrompt({ path, text, resolve });
+    });
 
   // Builds the embed-mode layers: every local vector layer carries its own
   // features so the project is self-contained (portable to another machine or
@@ -1098,8 +1137,8 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     });
     const choice =
       rememberedVectorChoice ??
-      (await askEmbedVectorData(count, bytes, isTauri(), state.projectGeneration));
-    if (choice === "cancel") return "cancel";
+      (await askEmbedVectorData(count, bytes, isTauri(), state.projectGeneration, isTauri()));
+    if (choice === "cancel" || choice === "fileref") return "cancel";
     // A project can be opened while a prompt is visible. Do not apply that
     // prompt's answer to the replacement project or continue saving stale data.
     if (useAppStore.getState().projectGeneration !== state.projectGeneration) return "cancel";
@@ -1477,6 +1516,10 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     resolveCredentialStripPrompt,
     embedVectorDataPrompt,
     resolveEmbedVectorDataPrompt,
+    droppedProjectPrompt,
+    droppedProjectSaving,
+    resolveDroppedProjectPrompt,
+    promptDroppedProject,
     saveNamePrompt,
     saveNameInput,
     setSaveNameInput,
