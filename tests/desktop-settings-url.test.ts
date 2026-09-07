@@ -57,7 +57,7 @@ describe("desktop settings URL", () => {
     assert.equal(settings.cesiumIonToken, "");
     assert.deepEqual(settings.aiProfiles, []);
     assert.deepEqual(settings.pluginManifestUrls, []);
-    assert.equal(settings.startup.mode, "default");
+    assert.equal(settings.startup.mode, "last");
   });
 
   it("reports HTTP, malformed JSON, and non-object documents", async () => {

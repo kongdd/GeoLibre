@@ -19,6 +19,8 @@ describe("startup project settings", () => {
       projectPath: null,
       projectName: null,
       globeByDefault: true,
+      center: [-100, 40],
+      zoom: 2,
     });
   });
 
@@ -50,6 +52,8 @@ describe("startup project settings", () => {
         projectPath: "/tmp/field.geolibre.json",
         projectName: "Field",
         globeByDefault: false,
+        center: [-100, 40],
+        zoom: 2,
       },
     );
   });

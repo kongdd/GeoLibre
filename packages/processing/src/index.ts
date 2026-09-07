@@ -10,6 +10,8 @@ export {
   getVectorTool,
   resolveVectorRerun,
   matchFeaturesByLocation,
+  decodePolylineTool,
+  encodePolylineTool,
   MAX_CLIENT_PAIRS,
   SELECT_LOCATION_PREDICATES,
   type LocationMatches,
@@ -45,7 +47,14 @@ export {
   kernelDensityTool,
   emergingHotSpotTool,
   emergingPattern,
+  compositeScoreTool,
+  computeCompositeScores,
+  normalizeFieldValues,
   numericFieldValue,
+  type CompositeAggregation,
+  type CompositeNullHandling,
+  type CompositeScoreOptions,
+  type CompositeScoreResult,
 } from "./statistics-tools";
 export {
   buildBinSql,

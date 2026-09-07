@@ -49,9 +49,10 @@ describe("project storage", () => {
     assert.equal(projectDataStorage({ dataStorage: "remote" }), "remote");
     assert.equal(remotePhotoQuality({}), "original");
     assert.equal(remotePhotoQuality({ remotePhotoQuality: "optimized" }), "optimized");
-    assert.equal(remoteProjectFilePath("../trip"), "/mnt/z/GeoLibre/.._trip/.._trip.geolibre.json");
+    assert.equal(remoteProjectFilePath("../trip"), "/mnt/z/GeoLibre/.._trip/.._trip.geolibre");
     assert.equal(isRemoteProjectPath("/mnt/z/GeoLibre/trip/trip.geolibre.json"), true);
     assert.equal(isRemoteProjectFile("/mnt/z/GeoLibre/trip/trip.geolibre.json"), true);
+    assert.equal(isRemoteProjectFile("/mnt/z/GeoLibre/trip/trip.geolibre"), true);
     assert.equal(isRemoteProjectFile("/mnt/z/GeoLibre/trip.geolibre.json"), false);
     assert.equal(isRemoteProjectFile("/mnt/z/GeoLibre/../escape.json"), false);
     assert.equal(isRemoteProjectFile("/mnt/z/GeoLibre/trip/photo.jpg"), false);
