@@ -7,9 +7,10 @@ import {
   getRegionalBasemapByStyleUrl,
   isRegionalBasemapSentinel,
   PLANETARY_BASEMAP_SENTINEL_PREFIX,
-  type RegionalBasemap,
   scaleAltitudeToActiveBody,
+  styleValue,
   useAppStore,
+  type RegionalBasemap,
 } from "@geolibre/core";
 import type {
   GeoLibreLayer,
@@ -32,13 +33,18 @@ import {
   clusterLayerId,
   fillExtrusionLayerId,
   fillLayerId,
+  generatorCircleLayerId,
+  generatorFillLayerId,
+  generatorLineLayerId,
   getLayerBounds,
   heatmapLayerId,
   highlightCircleLayerId,
   highlightFillLayerId,
   highlightLineLayerId,
   highlightSourceId,
+  invertedFillLayerId,
   labelLayerId,
+  lineDecorationLayerId,
   lineLayerId,
   markerLayerId,
   sourceId,
@@ -53,6 +59,9 @@ import {
   vectorTileStyleLayerIds,
 } from "./layer-sync";
 import { globeSafeMaxZoom } from "./globe-fit-bounds";
+import { drawExtentOnCanvas } from "./extent-drawing";
+import { captureEngineImage } from "./map-capture";
+import type { ExtentDrawingOptions, MapExtent } from "./map-engine";
 import {
   blendModeSignature,
   installLayerBlendModes,
@@ -187,6 +196,28 @@ const OPACITY_PAINT_PROPERTIES: Record<string, string[]> = {
   raster: ["raster-opacity"],
   symbol: ["icon-opacity", "text-opacity"],
 };
+
+/**
+ * The paint value a story fade writes for one property of one style layer.
+ *
+ * Fades write absolute opacities, but the geometry generator's fill/circle
+ * opacity is the product of the layer opacity and the style's own
+ * `geometryGeneratorOpacity` (see `applyGeometryGeneratorLayers`), so a fade
+ * back to 1 must not promote a translucent buffer to solid.
+ */
+function storyPaintOpacity(
+  layer: GeoLibreLayer,
+  nativeId: string,
+  prop: string,
+  opacity: number,
+): number {
+  const isGeneratorFill =
+    (nativeId === generatorFillLayerId(layer.id) && prop === "fill-opacity") ||
+    (nativeId === generatorCircleLayerId(layer.id) && prop === "circle-opacity");
+  if (!isGeneratorFill) return opacity;
+  const generatorOpacity = styleValue(layer.style, "geometryGeneratorOpacity");
+  return opacity * Math.min(1, Math.max(0, generatorOpacity));
+}
 const TERRAIN_SOURCE_ID = "geolibre-terrain-dem";
 const DEFAULT_TERRAIN_SOURCE: maplibregl.RasterDEMSourceSpecification = {
   type: "raster-dem",
@@ -844,8 +875,10 @@ export class MapController implements MapEngine {
    */
   setStoryLayerOpacity(layerId: string, opacity: number, durationMs?: number): void {
     if (!this.map) return;
+    const layer = this.syncedLayers.find((item) => item.id === layerId);
+    if (!layer) return;
     const clamped = Math.min(1, Math.max(0, opacity));
-    for (const nativeId of this.getNativeLayerIdsByLayerId(layerId)) {
+    for (const nativeId of this.getStoryStyleLayerIds(layer)) {
       const styleLayer = this.map.getLayer(nativeId);
       if (!styleLayer) continue;
       const props = OPACITY_PAINT_PROPERTIES[styleLayer.type] ?? [];
@@ -855,9 +888,39 @@ export class MapController implements MapEngine {
             duration: durationMs,
           });
         }
-        setDynamicPaintProperty(this.map, nativeId, prop, clamped);
+        setDynamicPaintProperty(
+          this.map,
+          nativeId,
+          prop,
+          storyPaintOpacity(layer, nativeId, prop, clamped),
+        );
       }
     }
+  }
+
+  /**
+   * Every MapLibre style layer a story fade must reach for a project layer:
+   * its primary render layers plus the companion symbology `syncLayers` draws
+   * beside them (inverted fill, line decorations, geometry-generator output).
+   * The companions are internal (`geolibre:internal`) and so deliberately
+   * absent from {@link getCandidateStyleLayers}, which feeds identify and the
+   * layer control; without them a chapter that fades a layer out leaves its
+   * centroids or buffers on screen (discussion #2326).
+   */
+  private getStoryStyleLayerIds(layer: GeoLibreLayer): string[] {
+    const ids = this.getNativeLayerIds(layer);
+    if (layer.type !== "geojson") return ids;
+    const seen = new Set(ids);
+    for (const id of [
+      invertedFillLayerId(layer.id),
+      lineDecorationLayerId(layer.id),
+      generatorFillLayerId(layer.id),
+      generatorLineLayerId(layer.id),
+      generatorCircleLayerId(layer.id),
+    ]) {
+      if (!seen.has(id) && this.map?.getLayer(id)) ids.push(id);
+    }
+    return ids;
   }
 
   /**
@@ -877,7 +940,7 @@ export class MapController implements MapEngine {
     // restored values animate back in (potentially over a multi-second fade).
     if (this.map) {
       for (const layer of this.syncedLayers) {
-        for (const nativeId of this.getNativeLayerIdsByLayerId(layer.id)) {
+        for (const nativeId of this.getStoryStyleLayerIds(layer)) {
           const styleLayer = this.map.getLayer(nativeId);
           if (!styleLayer) continue;
           for (const prop of OPACITY_PAINT_PROPERTIES[styleLayer.type] ?? []) {
@@ -1078,6 +1141,7 @@ export class MapController implements MapEngine {
   }
 
   destroy(): void {
+    this.extentDrawingDispose?.();
     this.removeNavigationControl();
     this.removeFullscreenControl();
     this.removeCompassControl();
@@ -1649,6 +1713,85 @@ export class MapController implements MapEngine {
         ...(maxZoom === null ? {} : { maxZoom }),
       },
     );
+  }
+
+  private extentDrawingDispose: (() => void) | null = null;
+
+  getRenderSurface() {
+    return this.map;
+  }
+
+  getRenderStatus(): { pending: string[]; errors: string[] } {
+    const map = this.map;
+    if (!map) return { pending: [], errors: ["The map is not available"] };
+    return {
+      pending:
+        map.loaded() && map.areTilesLoaded() && !map.isMoving() ? [] : ["Map tiles and camera"],
+      errors: [],
+    };
+  }
+
+  captureImage(): Promise<Blob> {
+    return captureEngineImage(this);
+  }
+
+  onCameraIdle(listener: () => void): () => void {
+    const map = this.map;
+    map?.on("moveend", listener);
+    return () => {
+      map?.off("moveend", listener);
+    };
+  }
+  stopCamera(): void {
+    this.map?.stop();
+  }
+  suspendNavigation(): () => void {
+    const map = this.map;
+    if (!map) return () => {};
+    const handlers = [
+      map.dragPan,
+      map.boxZoom,
+      map.dragRotate,
+      map.scrollZoom,
+      map.touchZoomRotate,
+      map.touchPitch,
+      map.doubleClickZoom,
+      map.keyboard,
+    ];
+    const enabled = handlers.map((handler) => handler.isEnabled());
+    handlers.forEach((handler) => handler.disable());
+    return () =>
+      handlers.forEach((handler, index) => {
+        if (enabled[index]) handler.enable();
+      });
+  }
+
+  getViewBounds(): MapExtent | null {
+    const bounds = this.map?.getBounds();
+    return bounds
+      ? [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]
+      : null;
+  }
+
+  showExtent(_extent: MapExtent): () => void {
+    // The extraction panels draw their MapLibre overlay above custom layers.
+    return () => {};
+  }
+
+  drawExtent(options: ExtentDrawingOptions): () => void {
+    this.extentDrawingDispose?.();
+    const map = this.map;
+    if (!map) return () => {};
+    this.extentDrawingDispose = drawExtentOnCanvas(
+      map.getCanvas(),
+      (point) => {
+        const location = map.unproject([point.x, point.y]);
+        return [location.lng, location.lat];
+      },
+      () => this.suspendNavigation(),
+      options,
+    );
+    return this.extentDrawingDispose;
   }
 
   /**

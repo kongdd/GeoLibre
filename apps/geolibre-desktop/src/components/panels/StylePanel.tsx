@@ -2,7 +2,9 @@ import {
   BLEND_MODES,
   DEFAULT_BLEND_MODE,
   DEFAULT_LAYER_STYLE,
+  LABEL_NUMBER_LOCALES,
   controlRendersLayer,
+  formatLabelNumberSample,
   isInitialLayerStyle,
   type BlendMode,
   type DiagramField,
@@ -24,6 +26,7 @@ import {
   type VectorStyleStop,
   collectDiagramData,
   geojsonHasZCoordinates,
+  isCzmlLayer,
   isStyleLibraryTargetLayer,
   parseJsonExpression,
   pluginOwnsPaint,
@@ -1023,7 +1026,7 @@ export function StylePanel({
   onCollapsedChange,
   hideOwnRail = false,
 }: StylePanelProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const selectedLayerId = useAppStore((s) => s.selectedLayerId);
   const layers = useAppStore((s) => s.layers);
   const setLayerOpacity = useAppStore((s) => s.setLayerOpacity);
@@ -1788,6 +1791,12 @@ export function StylePanel({
   const isDeckVectorLayer = hasExternalDeckLayer(layer);
   const isRasterTileLayer = layer.metadata.tileType === "raster";
   const isThreeDTilesLayer = layer.type === "3d-tiles";
+  // A CZML scene reuses the `3d-tiles` type so the globe owns it, but
+  // `CesiumLayerSync` only toggles its visibility: no `Cesium3DTileStyle` is
+  // compiled for it and no feature filter reaches its entities, so the tileset
+  // symbology and quick-filter controls would be silent no-ops (#2290).
+  const isCzmlScene = isCzmlLayer(layer);
+  const hasTilesetSymbology = isThreeDTilesLayer && !isCzmlScene;
   // An external plugin's MapLibre custom (WebGL) layer draws its own pixels and
   // has no MapLibre paint properties, so every paint editor below would be inert
   // for it (#1445). The plugin declares that with `paintMode: "plugin"`; the
@@ -1833,6 +1842,7 @@ export function StylePanel({
     // `type` (a deck GeoJSON layer is still `"geojson"`), so testing the type
     // first would let it through even though a custom layer accepts no filter.
     !hasExternalDeckLayer(layer) &&
+    !isCzmlScene &&
     (layer.type === "geojson" ||
       layer.type === "vector-tiles" ||
       layer.type === "mbtiles" ||
@@ -4002,6 +4012,58 @@ export function StylePanel({
             </Select>
           </div>
           <div className="space-y-2">
+            <label
+              htmlFor="labelNumberFormat"
+              className="flex items-center gap-2 text-sm font-medium"
+            >
+              <input
+                id="labelNumberFormat"
+                type="checkbox"
+                checked={labels.numberFormatEnabled}
+                onChange={(event) => updateLabels({ numberFormatEnabled: event.target.checked })}
+              />
+              {t("style.labels.numberFormat")}
+            </label>
+            {labels.numberFormatEnabled ? (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <NumericStyleInput
+                    id="labelNumberDecimals"
+                    label={t("style.labels.numberDecimals")}
+                    min={0}
+                    max={10}
+                    step={1}
+                    value={labels.numberDecimals}
+                    onChange={(numberDecimals) => updateLabels({ numberDecimals })}
+                  />
+                  <div className="space-y-2">
+                    <Label htmlFor="labelNumberLocale">{t("style.labels.numberLocale")}</Label>
+                    <Select
+                      id="labelNumberLocale"
+                      value={labels.numberLocale}
+                      onChange={(event) => updateLabels({ numberLocale: event.target.value })}
+                    >
+                      <option value="">{t("style.labels.numberLocaleApp")}</option>
+                      {LABEL_NUMBER_LOCALES.map((locale) => (
+                        <option key={locale} value={locale}>
+                          {formatLabelNumberSample(locale, labels.numberDecimals)}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t("style.labels.numberFormatHint", {
+                    sample: formatLabelNumberSample(
+                      labels.numberLocale || i18n.language,
+                      labels.numberDecimals,
+                    ),
+                  })}
+                </p>
+              </>
+            ) : null}
+          </div>
+          <div className="space-y-2">
             <Label htmlFor="labelPlacement">{t("style.labels.placement")}</Label>
             <Select
               id="labelPlacement"
@@ -4944,6 +5006,18 @@ export function StylePanel({
                 still has to appear for a layer restored from one. */}
             {hasNetcdfSymbology ? (
               <NetcdfSymbologySection layer={layer} />
+            ) : hasTilesetSymbology ? (
+              // A tileset has no MapLibre paint properties, but the globe can
+              // classify its features from the same symbology every vector
+              // layer uses — `CesiumLayerSync` compiles the colour expression
+              // and the layer filter into a `Cesium3DTileStyle` (#2290). The
+              // attribute list comes from `metadata.fields`, which the globe
+              // fills in from the first rendered tile, so it appears once the
+              // tileset has drawn rather than while it is still loading.
+              <>
+                <p className="text-xs text-muted-foreground">{t("style.tilesetSymbology")}</p>
+                {vectorSymbologyControls}
+              </>
             ) : (
               <p className="text-xs text-muted-foreground">{t("style.noControls")}</p>
             )}
@@ -4967,7 +5041,7 @@ export function StylePanel({
         </ScrollArea>
         <Separator />
         <p className="p-2 text-[10px] text-muted-foreground">
-          {t("style.selectedLayerType", { type: layer.type })}
+          {t("style.selectedLayerType", { type: isCzmlScene ? "czml" : layer.type })}
         </p>
       </aside>
     );

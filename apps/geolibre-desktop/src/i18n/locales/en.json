@@ -381,6 +381,14 @@
       "polyline": {
         "label": "Add Encoded Polyline Layer",
         "description": "Import encoded polyline strings (Google, OSRM, Valhalla) from text or files as vector lines."
+      },
+      "cesiumIon": {
+        "label": "Add Cesium Ion Asset",
+        "description": "Add a 3D Tiles tileset or imagery from Cesium Ion by asset id. Renders on the 3D globe with your Cesium Ion token."
+      },
+      "czml": {
+        "label": "Add CZML Dynamic 3D Layer",
+        "description": "Load a dynamic Cesium Language (CZML) document describing orbits, trajectories, vehicle paths, and time-varying 3D scenes on the globe."
       }
     },
     "shared": {
@@ -437,6 +445,32 @@
       "imported_other": "Imported {{count}} services.",
       "importedWithDropped_one": "Imported {{count}} service ({{dropped}} skipped — library full).",
       "importedWithDropped_other": "Imported {{count}} services ({{dropped}} skipped — library full)."
+    },
+    "cesiumIon": {
+      "defaultName": "Cesium Ion asset",
+      "assetId": "Asset ID",
+      "kindTileset": "3D Tiles",
+      "kindImagery": "Imagery",
+      "altitudeOffset": "Altitude offset (m)",
+      "quickPicks": "Quick picks",
+      "hint": "Find asset ids under My Assets at ion.cesium.com. The asset must be shared with the token configured in Settings.",
+      "errorAssetId": "Enter a Cesium Ion asset id (a positive whole number).",
+      "errorAltitude": "Enter the altitude offset as a number of metres.",
+      "tokenMissing": "No Cesium Ion token is configured. Add one in Settings → Environment variables (VITE_CESIUM_TOKEN) or the asset will fail to load."
+    },
+    "czml": {
+      "defaultName": "CZML Dynamic Scene",
+      "url": "CZML URL",
+      "sourceModeUrl": "URL",
+      "sourceModeFile": "Local file",
+      "file": "File",
+      "quickPicks": "Sample dynamic scenes",
+      "hint": "CZML streams or files define dynamic 3D positions, animations, and orbits synchronized with the globe clock.",
+      "errorUrl": "Enter a valid CZML endpoint URL.",
+      "errorChooseFile": "Select a CZML (.czml or .json) file to load.",
+      "errorFileMissing": "The selected file could not be read.",
+      "errorInvalidCzml": "The file does not contain a valid CZML document (expected JSON array or packet object).",
+      "readError": "Failed to read CZML data."
     },
     "xyz": {
       "defaultName": "XYZ Layer",
@@ -1552,7 +1586,7 @@
   },
   "printLayout": {
     "title": "Print Layout",
-    "description": "Compose a print-ready map with a title, legend, scale bar, and north arrow, then export it to PNG or PDF.",
+    "description": "Compose a print-ready map with a title, legend, scale bar, and north arrow, then export it to PNG, PDF or SVG.",
     "preview": "Preview",
     "resizeControls": "Resize controls panel",
     "resizeDialog": "Resize dialog",
@@ -1560,6 +1594,7 @@
     "copyToClipboard": "Copy to Clipboard",
     "copied": "Copied",
     "exportPng": "Export PNG",
+    "exportSvg": "Export SVG",
     "exportPdf": "Export PDF",
     "titleLabel": "Title",
     "titlePlaceholder": "Map title",
@@ -1986,6 +2021,7 @@
     "show3d": "Show map {{number}} as a 3D globe",
     "show2d": "Show map {{number}} as a 2D map",
     "only2d": "2D only",
+    "only3d": "3D only",
     "cesiumTokenHint": "Add a Cesium Ion token in Settings for terrain and Ion imagery"
   },
   "renderer": {
@@ -1993,6 +2029,7 @@
     "imagery": "Imagery",
     "projectBasemap": "Project basemap",
     "layerUnsupported": "Not rendered by the 3D globe",
+    "layerCesiumOnly": "Rendered by the 3D globe only",
     "resetView": "Reset view",
     "scene3D": "3D globe",
     "scene2D": "2D map",
@@ -2597,6 +2634,8 @@
       "georss": "GeoRSS Layer",
       "video": "Video Layer",
       "deckglViz": "Deck.gl Layer",
+      "cesiumIon": "Cesium Ion Asset",
+      "czml": "CZML Dynamic 3D Scene",
       "gltfModel": "3D Model (glTF)",
       "postgres": "PostgreSQL Layer",
       "iceberg": "Apache Iceberg Layer"
@@ -3735,6 +3774,7 @@
     "search": "Search",
     "searchCurrentView": "Search the current map area",
     "enterKeyword": "Enter a keyword to begin.",
+    "viewUnavailable": "The current map area is unavailable; turn off the map-area filter to search.",
     "loadMore": "Load more",
     "searching": "Searching…",
     "loadingMore": "Loading more datasets…",
@@ -6738,6 +6778,11 @@
       "offsetY": "Offset Y (em)",
       "rotation": "Rotation (°)",
       "maxWidth": "Wrap width (em)",
+      "numberFormat": "Format numbers",
+      "numberFormatHint": "Numeric values are labeled with thousands and decimal separators, e.g. {{sample}}. Text values are unchanged, and a label expression formats its own output.",
+      "numberDecimals": "Decimal places",
+      "numberLocale": "Separators",
+      "numberLocaleApp": "Match app language",
       "transform": "Letter case",
       "transformNone": "As entered",
       "transformUppercase": "UPPERCASE",
@@ -6939,6 +6984,7 @@
     "mode2d": "2D",
     "mode3dExtrusion": "3D extrusion",
     "noControls": "Style controls are not available for this layer type yet.",
+    "tilesetSymbology": "Colors and filters apply to this tileset on the 3D globe.",
     "selectedLayerType": "Selected layer type: {{type}}",
     "footerDeck": "Changes apply live to DuckDB deck.gl layer styling.",
     "footerMaplibre": "Changes apply live to MapLibre paint properties.",
@@ -7039,6 +7085,7 @@
         "upcase": "Converts a string to upper case.",
         "downcase": "Converts a string to lower case.",
         "slice": "Returns a section of a string or array.",
+        "numberFormat": "Formats a number as text using a locale's thousands and decimal separators, with optional fixed decimal places.",
         "toNumber": "Converts a value to a number.",
         "toString": "Converts a value to a string.",
         "toBoolean": "Converts a value to true or false.",

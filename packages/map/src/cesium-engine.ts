@@ -18,11 +18,19 @@ import {
   canvasHeight,
   groundHeightAt,
   isSameView,
+  pickGlobeHit,
   readMapViewFromCamera,
   zoomToRange,
   zoomToSceneRange,
 } from "./cesium-camera";
 import { getPrimaryCesiumControlHost } from "./cesium-control-host";
+import { pickDrawingLocation, placeCesiumPin, suspendCesiumNavigation } from "./cesium-drawing";
+import { drawExtentOnCanvas } from "./extent-drawing";
+import { captureEngineImage } from "./map-capture";
+import { TerrariumTerrainProvider } from "./cesium-terrarium";
+import { registerCogDemSource, type CogDemSourceRegistration } from "./cog-dem-source";
+import type { MapRenderSurface } from "./map-engine";
+import type { ExtentDrawingOptions, MapExtent } from "./map-engine";
 import { CesiumLayerSync } from "./cesium-layer-sync";
 import { getLayerBounds } from "./geojson-loader";
 import type {
@@ -48,7 +56,6 @@ type CesiumNs = typeof import("@cesium/engine");
  *   canvas stays 2D-only.
  * - `customLayers`: a MapLibre `CustomLayerInterface` is a callback into
  *   MapLibre's own WebGL pass; deck.gl's MapLibre interop is the same shape.
- * - `onMapDrawing`: no manual-placement pin.
  *
  * `terrain: true` is the flag worth noting in the other direction — terrain is
  * native on the globe, and the old `primaryRenderer === "cesium"` gates disabled
@@ -60,7 +67,7 @@ export const CESIUM_CAPABILITIES: MapEngineCapabilities = Object.freeze({
   customLayers: false,
   terrain: true,
   picking: true,
-  onMapDrawing: false,
+  onMapDrawing: true,
   domControls: true,
 });
 
@@ -105,6 +112,48 @@ const FLY_SECONDS = 0.8;
 /** Zoom floor when framing a point-sized extent; matches MapController.fitBounds. */
 const POINT_FIT_ZOOM = 14;
 
+/**
+ * The globe's native scene, for the handful of plugins that drive Cesium
+ * directly (issue #2287): the Sun simulation lights the globe, Atmospheric
+ * Effects toggles the sky box and atmosphere, the Flight Simulator places the
+ * camera every frame.
+ *
+ * This is the globe's counterpart to `MapEngine.getMap()` — an escape hatch
+ * behind a typed accessor rather than a second untyped `getMap()`. It hands out
+ * the namespace alongside the widget because Cesium classes (`SunLight`,
+ * `JulianDate`, `Cartesian3`) are constructed from the namespace, and the
+ * engine is the only thing that holds it: the plugin package never imports
+ * `@cesium/engine` at runtime, which is what keeps the ~4.8 MB engine off the
+ * 2D boot path.
+ */
+export interface CesiumSceneHandle {
+  /** The `@cesium/engine` namespace the globe was built from. */
+  readonly Cesium: CesiumNs;
+  /** The live widget. Callers must not destroy it. */
+  readonly viewer: CesiumWidget;
+  /** Convenience for `viewer.scene`. */
+  readonly scene: CesiumWidget["scene"];
+  /** Convenience for `viewer.camera`. */
+  readonly camera: CesiumWidget["camera"];
+  /** Convenience for `viewer.clock`. */
+  readonly clock: CesiumWidget["clock"];
+  /** The WebGL canvas. */
+  readonly canvas: HTMLCanvasElement;
+  /**
+   * Whether this globe is the primary map area rather than a grid pane. The
+   * environment plugins bind to the primary globe only, the way they bind to
+   * the primary MapLibre map and not to a secondary pane.
+   */
+  readonly primary: boolean;
+  /** Ask the scene to draw a frame (a no-op outside request-render mode). */
+  requestRender(): void;
+  /**
+   * The camera in the store's engine-neutral shape (`MapEngine.readView`), so
+   * a plugin can seed from the current view without the camera maths.
+   */
+  readView(): MapViewState;
+}
+
 export interface CesiumEngineOptions {
   /** Whether this canvas has credentials for Cesium World Terrain. */
   worldTerrainAvailable?: boolean;
@@ -134,6 +183,50 @@ export interface CesiumEngineOptions {
  * engines legitimately do differently, which is why `MapEngine` does not declare
  * it.
  */
+/**
+ * The visibility and corner each of the primary globe's built-in controls
+ * was last given, kept outside the engine because the engine does not
+ * outlive the globe: a renderer swap away from Cesium and back destroys the
+ * viewer, the control host, and the engine with them, while the Controls menu
+ * and any plugin that moved a control keep their state. The next mount reads
+ * this in {@link CesiumEngine.registerBuiltInControl} so a hidden control is
+ * never mounted and a moved one lands in its corner, without waiting for the
+ * menu to replay its checkboxes.
+ *
+ * A best-effort seed, not the authority: the menu still replays visibility
+ * once the engine is ready, so a state that went stale while MapLibre was the
+ * primary renderer (a new project resets the menu's checkboxes through
+ * whichever engine is live) is corrected on that replay.
+ */
+const primaryBuiltInControlState = new Map<
+  BuiltInMapControl,
+  { visible?: boolean; position?: maplibregl.ControlPosition }
+>();
+
+function rememberPrimaryBuiltInControl(
+  control: BuiltInMapControl,
+  state: { visible?: boolean; position?: maplibregl.ControlPosition },
+): void {
+  primaryBuiltInControlState.set(control, {
+    ...primaryBuiltInControlState.get(control),
+    ...state,
+  });
+}
+
+/**
+ * Forget every remembered control state, so the next globe mounts its
+ * controls visible at top-right.
+ *
+ * A new project resets the built-in controls through whichever engine is
+ * live, which never reaches this record while MapLibre is the primary
+ * renderer; the app calls this alongside that reset so a corner from the
+ * previous project cannot follow the user into the new one. Tests, which
+ * share the module, call it between cases.
+ */
+export function resetPrimaryCesiumBuiltInControlState(): void {
+  primaryBuiltInControlState.clear();
+}
+
 export class CesiumEngine implements MapEngine {
   readonly kind = "cesium" as const;
   /**
@@ -199,6 +292,10 @@ export class CesiumEngine implements MapEngine {
   private terrainEnabled = false;
   private terrainRequest = 0;
   private terrainExaggeration = 1;
+  private terrainProvider: TerrariumTerrainProvider | null = null;
+  private cogTerrain: CogDemSourceRegistration | null = null;
+  private cogTerrainUrl: string | null = null;
+  private cogTerrainRequest = 0;
   private disposers: Array<() => void> = [];
   /**
    * Controls `CesiumCanvas` built and handed over under a built-in control id.
@@ -213,7 +310,9 @@ export class CesiumEngine implements MapEngine {
     this.worldTerrainAvailable = options.worldTerrainAvailable ?? true;
     this.capabilities =
       options.viewId === undefined ? CESIUM_CAPABILITIES : CESIUM_PANE_CAPABILITIES;
-    this.layerSync = new CesiumLayerSync(Cesium, viewer);
+    this.layerSync = new CesiumLayerSync(Cesium, viewer, undefined, {
+      onTilesetFields: publishTilesetFields,
+    });
     this.terrainExaggeration = viewer.scene.verticalExaggeration ?? 1;
     this.installInputTracking();
     this.installTerrainCorrection();
@@ -249,10 +348,19 @@ export class CesiumEngine implements MapEngine {
   // ---------------------------------------------------------------- lifecycle
 
   destroy(): void {
+    this.terrainRequest++;
+    this.cogTerrainRequest++;
+    this.terrainProvider?.destroy();
+    this.cogTerrain?.dispose();
+    this.drawingDispose?.();
+    this.drawingDispose = null;
+    for (const dispose of this.extentDisposers) dispose();
     for (const dispose of this.disposers.splice(0)) dispose();
     this.layerSync.destroy();
     // The control host tears the controls themselves down; drop the references
-    // so a late setBuiltInControlVisible cannot re-add one to a dead globe.
+    // so a late setBuiltInControlVisible cannot re-add one to a dead globe. The
+    // visibility and corner each control was last given stay in
+    // `primaryBuiltInControlState`, which is what the next mount reads.
     this.builtInControls.clear();
     // The widget itself belongs to CesiumCanvas, which destroys it; dropping the
     // handle here is what stops a late listener from touching a dead viewer.
@@ -408,9 +516,12 @@ export class CesiumEngine implements MapEngine {
     return carto.height - ground;
   }
 
-  /** Always `"globe"`: Cesium draws an ellipsoid, never a flat projection. */
+  /** Both flat scene modes use the projected map instead of the 3D ellipsoid. */
   readProjection(): MapProjection {
-    return "globe";
+    const mode = this.live()?.scene.mode;
+    return mode === this.Cesium.SceneMode.SCENE2D || mode === this.Cesium.SceneMode.COLUMBUS_VIEW
+      ? "mercator"
+      : "globe";
   }
 
   applyMapPreferences(preferences: MapPreferences): void {
@@ -511,11 +622,54 @@ export class CesiumEngine implements MapEngine {
    * the globe does not have. `CesiumLayerSync` applies `layer.opacity` on sync,
    * so a story that writes opacity to the store still fades on the globe.
    */
-  setStoryLayerOpacity(_layerId: string, _opacity: number, _durationMs?: number): void {}
+  setStoryLayerOpacity(layerId: string, opacity: number, _durationMs?: number): void {
+    this.layerSync.setStoryLayerOpacity(layerId, opacity);
+  }
 
-  restoreLayerStyles(): void {}
+  /**
+   * Revert all temporary layer style overrides (such as story opacities) applied
+   * during playback back to their stored layer opacities.
+   */
+  restoreLayerStyles(): void {
+    this.layerSync.restoreStoryLayerStyles();
+  }
+
+  /**
+   * Synchronize the globe clock's current time to a date (e.g. from the Time Slider).
+   *
+   * @param date Date, timestamp string, or epoch milliseconds to set on the Cesium clock.
+   */
+  setTime(date: Date | string | number): void {
+    this.layerSync.setTime(date);
+  }
 
   // ------------------------------------------------------------------ picking
+
+  /** Ground coordinates under the cursor; an ellipsoid fallback has no terrain height. */
+  readPointerAtScreen(point: Cartesian2): {
+    coordinates: [number, number];
+    elevation: number | null;
+  } | null {
+    const viewer = this.live();
+    if (!viewer || this.isMorphing() || !Number.isFinite(point.x) || !Number.isFinite(point.y))
+      return null;
+    const hit = pickGlobeHit(this.Cesium, viewer, point);
+    if (!hit) return null;
+    // The same ellipsoid pickGlobeHit fell back to, so a globe-less scene
+    // degrades to "no hit" rather than throwing on every pointer move.
+    const ellipsoid = viewer.scene.globe?.ellipsoid ?? this.Cesium.Ellipsoid.WGS84;
+    const position = ellipsoid.cartesianToCartographic(hit.position);
+    if (!position) return null;
+    const coordinates: [number, number] = [
+      this.Cesium.Math.toDegrees(position.longitude),
+      this.Cesium.Math.toDegrees(position.latitude),
+    ];
+    if (!coordinates.every(Number.isFinite)) return null;
+    return {
+      coordinates,
+      elevation: hit.terrain && Number.isFinite(position.height) ? position.height : null,
+    };
+  }
 
   identifyFeatures(lngLat: [number, number], layerId?: string): IdentifiedFeature[] {
     const viewer = this.live();
@@ -599,9 +753,168 @@ export class CesiumEngine implements MapEngine {
     this.live()?.scene.requestRender();
   }
 
-  /** Places nothing and returns a no-op teardown; see `onMapDrawing`. */
-  startManualPlacement(_lngLat: [number, number], _options: ManualPlacementOptions): () => void {
-    return () => {};
+  private drawingDispose: (() => void) | null = null;
+  private extentDisposers = new Set<() => void>();
+  private renderSurface: MapRenderSurface | null = null;
+  private cameraMoving = false;
+
+  getRenderSurface(): MapRenderSurface | null {
+    const viewer = this.live();
+    if (!viewer) return null;
+    const C = this.Cesium;
+    this.renderSurface ??= {
+      getCanvas: () => viewer.canvas,
+      getContainer: () => viewer.container as HTMLElement,
+      getBearing: () => this.readView().bearing,
+      redraw: () => viewer.render(),
+      project: ([lng, lat]) => {
+        const toWindow = (lon: number, la: number) =>
+          C.SceneTransforms.worldToWindowCoordinates(
+            viewer.scene,
+            C.Cartesian3.fromDegrees(lon, la, groundHeightAt(C, viewer, lon, la)),
+          );
+        let point = toWindow(lng, lat);
+        if (!point) {
+          // Behind the camera (the user panned or tilted after drawing an
+          // extent): clamp into the visible rectangle so the caller clips to
+          // the canvas edge, the way MapLibre's off-screen pixel degrades,
+          // instead of failing the whole capture.
+          const view = viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid);
+          if (view) {
+            const degrees = C.Math.toDegrees;
+            const west = degrees(view.west);
+            let east = degrees(view.east);
+            if (east < west) east += 360;
+            let lon = lng < west ? lng + 360 : lng;
+            if (lon > east) lon = lon - 360 >= west ? lon - 360 : east;
+            lon = Math.min(east, Math.max(west, lon));
+            const la = Math.min(degrees(view.north), Math.max(degrees(view.south), lat));
+            point = toWindow(lon, la);
+          }
+        }
+        if (!point) throw new Error("The requested extent is outside the globe view");
+        return point;
+      },
+      unproject: ([x, y]) => {
+        const location = pickDrawingLocation(C, viewer, { x, y });
+        if (!location) throw new Error("The requested point is outside the globe");
+        return { lng: location[0], lat: location[1] };
+      },
+    };
+    return this.renderSurface;
+  }
+
+  getRenderStatus(): { pending: string[]; errors: string[] } {
+    const viewer = this.live();
+    if (!viewer) return { pending: [], errors: ["The globe is not available"] };
+    const status = this.layerSync.getRenderStatus();
+    if (!viewer.scene.globe.tilesLoaded) status.pending.push("Globe tiles");
+    if (this.isMorphing()) status.pending.push("Globe projection");
+    if (this.cameraMoving) status.pending.push("Globe camera");
+    if (!viewer.dataSourceDisplay.ready) status.pending.push("Globe features");
+    return status;
+  }
+
+  captureImage(): Promise<Blob> {
+    return captureEngineImage(this);
+  }
+
+  onCameraIdle(listener: () => void): () => void {
+    return this.live()?.camera.moveEnd.addEventListener(listener) ?? (() => {});
+  }
+  stopCamera(): void {
+    this.live()?.camera.cancelFlight();
+  }
+  suspendNavigation(): () => void {
+    const viewer = this.live();
+    return viewer ? suspendCesiumNavigation(viewer) : () => {};
+  }
+
+  startManualPlacement(lngLat: [number, number], options: ManualPlacementOptions): () => void {
+    this.drawingDispose?.();
+    const viewer = this.live();
+    if (!viewer) return () => {};
+    this.drawingDispose = placeCesiumPin(this.Cesium, viewer, lngLat, options, (element) => {
+      const control = { onAdd: () => element, onRemove: () => element.remove() };
+      if (this.addControl(control, "top-left")) return () => this.removeControl(control);
+      viewer.container.append(element);
+      return () => element.remove();
+    });
+    return this.drawingDispose;
+  }
+
+  drawExtent(options: ExtentDrawingOptions): () => void {
+    this.drawingDispose?.();
+    const viewer = this.live();
+    if (!viewer) return () => {};
+    this.drawingDispose = drawExtentOnCanvas(
+      viewer.canvas,
+      (point) => pickDrawingLocation(this.Cesium, viewer, point),
+      () => suspendCesiumNavigation(viewer),
+      options,
+    );
+    return this.drawingDispose;
+  }
+
+  getViewBounds(): MapExtent | null {
+    const viewer = this.live();
+    if (!viewer || this.isMorphing()) return null;
+    const rectangle = viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid);
+    if (!rectangle) return null;
+    const degrees = this.Cesium.Math.toDegrees;
+    const west = degrees(rectangle.west);
+    const east = degrees(rectangle.east);
+    // Cesium inverts the pair across the antimeridian; MapExtent unwraps it.
+    return [
+      west,
+      degrees(rectangle.south),
+      east < west ? east + 360 : east,
+      degrees(rectangle.north),
+    ];
+  }
+
+  showExtent(extent: MapExtent): () => void {
+    const viewer = this.live();
+    if (!viewer) return () => {};
+    const C = this.Cesium;
+    const [west, south, north] = [extent[0], extent[1], extent[3]];
+    // Rectangle geometry requires east <= 180; an unwrapped crossing is handed
+    // to Cesium in its own inverted (west > east) form.
+    const east = extent[2] > 180 ? extent[2] - 360 : extent[2];
+    const entity = viewer.entities.add({
+      rectangle: {
+        coordinates: C.Rectangle.fromDegrees(west, south, east, north),
+        material: C.Color.fromCssColorString("#38bdf8").withAlpha(0.2),
+      },
+      polyline: {
+        positions: C.Cartesian3.fromDegreesArray([
+          west,
+          south,
+          east,
+          south,
+          east,
+          north,
+          west,
+          north,
+          west,
+          south,
+        ]),
+        width: 2,
+        material: C.Color.fromCssColorString("#38bdf8"),
+        clampToGround: true,
+        arcType: C.ArcType.RHUMB,
+      },
+    });
+    const dispose = () => {
+      if (!this.extentDisposers.delete(dispose)) return;
+      if (!viewer.isDestroyed()) {
+        viewer.entities.remove(entity);
+        viewer.scene.requestRender();
+      }
+    };
+    this.extentDisposers.add(dispose);
+    viewer.scene.requestRender();
+    return dispose;
   }
 
   // ----------------------------------------------------------------- controls
@@ -634,14 +947,20 @@ export class CesiumEngine implements MapEngine {
    * Put a control the canvas built under a built-in control id, so the app's
    * existing Controls menu can govern it (issue #2270).
    *
-   * Only the fullscreen button uses this today. The globe's other two Cesium
-   * widgets — home and scene mode — have no entry in that menu and stay
-   * unconditional; the rest of the built-in controls are MapLibre's own and
-   * have no globe counterpart at all, which is why
-   * {@link setBuiltInControlVisible} still answers `false` for them.
+   * Home maps to compass, the scene-mode picker to globe, and fullscreen
+   * keeps its shared id. Controls without a globe counterpart are refused.
    */
   registerBuiltInControl(control: BuiltInMapControl, instance: maplibregl.IControl): void {
     this.builtInControls.set(control, instance);
+    // Mount it here, in the state it was last given, rather than leaving the
+    // canvas to mount every control visible at top-right and the Controls
+    // menu to correct that a frame later: a control the user hid would flash
+    // on every remount, and one a plugin moved would snap back to the default
+    // corner (#2295 review). A pane has no host to mount on; see `addControl`.
+    if (!this.isPrimary) return;
+    const state = primaryBuiltInControlState.get(control);
+    if (state?.visible === false) return;
+    getPrimaryCesiumControlHost()?.addControl(instance, this.getBuiltInControlPosition(control));
   }
 
   setBuiltInControlVisible(control: BuiltInMapControl, visible: boolean): boolean {
@@ -655,20 +974,27 @@ export class CesiumEngine implements MapEngine {
     // `addControl` is a no-op for a control already mounted and `removeControl`
     // for one already gone, so repeated calls (project restore replays every
     // control's visibility) settle rather than stacking duplicates.
-    if (visible) host.addControl(instance, "top-right");
+    if (visible) host.addControl(instance, this.getBuiltInControlPosition(control));
     else host.removeControl(instance);
+    rememberPrimaryBuiltInControl(control, { visible });
     return true;
   }
 
-  getBuiltInControlPosition(_control: BuiltInMapControl): maplibregl.ControlPosition {
-    return "top-right";
+  getBuiltInControlPosition(control: BuiltInMapControl): maplibregl.ControlPosition {
+    if (!this.isPrimary) return "top-right";
+    return primaryBuiltInControlState.get(control)?.position ?? "top-right";
   }
 
   setBuiltInControlPosition(
-    _control: BuiltInMapControl,
-    _position: maplibregl.ControlPosition,
+    control: BuiltInMapControl,
+    position: maplibregl.ControlPosition,
   ): boolean {
-    return false;
+    const instance = this.builtInControls.get(control);
+    if (!instance || !this.isPrimary) return false;
+    const host = getPrimaryCesiumControlHost();
+    if (!host?.setControlPosition(instance, position)) return false;
+    rememberPrimaryBuiltInControl(control, { position });
+    return true;
   }
 
   setCompassLabel(_label: string): void {}
@@ -682,7 +1008,7 @@ export class CesiumEngine implements MapEngine {
   }
 
   /**
-   * Toggle Cesium World Terrain. Unlike MapLibre — where terrain is a raster-DEM
+   * Toggle native terrain (COG, World Terrain, or keyless Terrarium). Unlike MapLibre — where terrain is a raster-DEM
    * source added to the style — this swaps the globe's terrain provider, so the
    * relief is real geometry rather than a displacement of the basemap.
    *
@@ -692,7 +1018,7 @@ export class CesiumEngine implements MapEngine {
    */
   setTerrainEnabled(enabled: boolean): boolean {
     const viewer = this.live();
-    if (!viewer || (enabled && !this.worldTerrainAvailable)) return false;
+    if (!viewer) return false;
     if (this.terrainEnabled === enabled) return true;
     if (!enabled) {
       this.terrainEnabled = false;
@@ -707,7 +1033,7 @@ export class CesiumEngine implements MapEngine {
   /**
    * Await-able form of `setTerrainEnabled(true)`, for the mount path.
    *
-   * `CesiumCanvas` adds world terrain *before* it seeds the camera, because
+   * `CesiumCanvas` adds terrain *before* it seeds the camera, because
    * ground height is what turns MapLibre's zoom into a camera distance — seeding
    * first would place the first frame against the ellipsoid and rely on the
    * terrain correction to fix it. The interface form cannot express that (it
@@ -715,11 +1041,17 @@ export class CesiumEngine implements MapEngine {
    * to it fire-and-forget.
    */
   async enableWorldTerrain(): Promise<void> {
-    if (!this.worldTerrainAvailable) return;
     this.terrainEnabled = true;
     const request = ++this.terrainRequest;
     try {
-      const provider = await this.Cesium.createWorldTerrainAsync();
+      const provider =
+        this.cogTerrain || !this.worldTerrainAvailable
+          ? (this.terrainProvider ??= new TerrariumTerrainProvider(
+              this.Cesium,
+              this.cogTerrain?.renderTile,
+              this.cogTerrain ? 22 : 15,
+            ))
+          : await this.Cesium.createWorldTerrainAsync();
       const viewer = this.live();
       // The toggle may have been reversed, or the viewer destroyed, while the
       // provider loaded; applying it then would resurrect terrain the user just
@@ -743,17 +1075,39 @@ export class CesiumEngine implements MapEngine {
     if (viewer) viewer.scene.verticalExaggeration = exaggeration;
   }
 
-  /** Cesium World Terrain is the only source the globe offers today. */
   getTerrainCogSource(): string | null {
-    return null;
+    return this.cogTerrainUrl;
   }
 
   hasCustomTerrainSource(): boolean {
-    return false;
+    return this.cogTerrain !== null;
   }
 
-  setTerrainCogSource(_source: string | Blob | null, _band = 1): Promise<boolean> {
-    return Promise.resolve(false);
+  async setTerrainCogSource(source: string | Blob | null, band = 1): Promise<boolean> {
+    if (!this.live()) return false;
+    const normalized = typeof source === "string" ? source.trim() || null : source;
+    const request = ++this.cogTerrainRequest;
+    let registration: CogDemSourceRegistration | null;
+    try {
+      registration = normalized ? await registerCogDemSource(normalized, band) : null;
+    } catch (error) {
+      if (request !== this.cogTerrainRequest || !this.live()) return false;
+      throw error;
+    }
+    if (request !== this.cogTerrainRequest || !this.live()) {
+      registration?.dispose();
+      return false;
+    }
+    this.terrainRequest++;
+    const previousProvider = this.terrainProvider;
+    const previousSource = this.cogTerrain;
+    this.terrainProvider = null;
+    this.cogTerrain = registration;
+    this.cogTerrainUrl = typeof normalized === "string" ? normalized : null;
+    if (this.terrainEnabled) await this.enableWorldTerrain();
+    previousProvider?.destroy();
+    previousSource?.dispose();
+    return true;
   }
 
   setTerrainLabel(_label: string): void {}
@@ -763,6 +1117,28 @@ export class CesiumEngine implements MapEngine {
   /** Always `null`: there is no MapLibre map behind the globe. */
   getMap(): maplibregl.Map | null {
     return null;
+  }
+
+  /**
+   * The native scene, or `null` once the widget is gone. See
+   * {@link CesiumSceneHandle} for who this is for.
+   */
+  getCesiumScene(): CesiumSceneHandle | null {
+    const viewer = this.live();
+    if (!viewer) return null;
+    return {
+      Cesium: this.Cesium,
+      viewer,
+      scene: viewer.scene,
+      camera: viewer.camera,
+      clock: viewer.clock,
+      canvas: viewer.canvas,
+      primary: this.isPrimary,
+      requestRender: () => {
+        if (!viewer.isDestroyed()) viewer.scene.requestRender();
+      },
+      readView: () => this.readView(),
+    };
   }
 
   // ------------------------------------------------------------------ internal
@@ -859,7 +1235,8 @@ export class CesiumEngine implements MapEngine {
     const canvas = viewer.canvas;
     const markMove = () => this.markUserDriven();
     const markDrag = (event: PointerEvent) => {
-      if (event.buttons !== 0) this.markUserDriven();
+      if (event.buttons !== 0 && viewer.scene.screenSpaceCameraController?.enableInputs !== false)
+        this.markUserDriven();
     };
     const opts: AddEventListenerOptions = { passive: true };
     canvas.addEventListener("pointermove", markDrag, opts);
@@ -932,10 +1309,18 @@ export class CesiumEngine implements MapEngine {
   private installCameraPublisher(): void {
     const viewer = this.live();
     if (!viewer) return;
-    const onMoveEnd = () => this.publishCameraView();
+    const onMoveStart = () => {
+      this.cameraMoving = true;
+    };
+    const onMoveEnd = () => {
+      this.cameraMoving = false;
+      this.publishCameraView();
+    };
+    viewer.camera.moveStart.addEventListener(onMoveStart);
     viewer.camera.moveEnd.addEventListener(onMoveEnd);
     this.disposers.push(() => {
       const live = this.live();
+      live?.camera.moveStart.removeEventListener(onMoveStart);
       live?.camera.moveEnd.removeEventListener(onMoveEnd);
     });
   }
@@ -992,4 +1377,27 @@ export class CesiumEngine implements MapEngine {
   getLastAppliedView(): MapViewState | null {
     return this.lastApplied;
   }
+}
+
+/**
+ * Record a tileset's attribute names on its store layer (issue #2290).
+ *
+ * A 3D Tiles layer has no `layer.geojson`, so the Style panel's attribute
+ * dropdowns have nothing to list until the tiles say what the features carry.
+ * `metadata.fields` is the channel the panel already reads for layers in that
+ * position (see `vector-layer-sync`, which fills it for control-managed vector
+ * layers). Written only when the names actually differ, so a globe re-mount —
+ * or a second pane drawing the same tileset — cannot loop the store.
+ */
+function publishTilesetFields(layerId: string, fields: string[]): void {
+  const state = useAppStore.getState();
+  const layer = state.layers.find((candidate) => candidate.id === layerId);
+  if (!layer) return;
+  const existing = layer.metadata?.fields;
+  const same =
+    Array.isArray(existing) &&
+    existing.length === fields.length &&
+    existing.every((name, index) => name === fields[index]);
+  if (same) return;
+  state.updateLayer(layerId, { metadata: { ...layer.metadata, fields: [...fields] } });
 }

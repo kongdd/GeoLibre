@@ -1,6 +1,7 @@
 import {
   DEFAULT_PROJECT_NAME,
   detachProjectCopy,
+  parseProject,
   projectFromStore,
   redactProjectCredentials,
   excludeHiddenFieldsFromProject,
@@ -319,6 +320,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     null,
   );
   const [droppedProjectSaving, setDroppedProjectSaving] = useState(false);
+  const droppedProjectOperationRef = useRef(0);
   const projectUrlAbortRef = useRef<AbortController | null>(null);
   const recentAbortRef = useRef<AbortController | null>(null);
   // Separate from projectUrlAbortRef so a gallery open and an Open-from-URL
@@ -1051,6 +1053,38 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
       setDroppedProjectPrompt({ path, text, resolve });
     });
 
+  /** Parse and open a project supplied by either browser or native drag-and-drop. */
+  const handleDroppedProject = async (
+    text: string,
+    path: string | null,
+  ): Promise<boolean> => {
+    try {
+      const project = parseProject(text);
+      loadProject(project, path, { rememberRecent: false });
+      return true;
+    } catch (error) {
+      console.error("Failed to open dropped project", error);
+      setActionError(
+        error instanceof Error ? error.message : t("toolbar.error.couldNotOpenProject"),
+      );
+      return false;
+    }
+  };
+
+  /** Open a project path delivered by the operating system or another app instance. */
+  const handleNativeProjectOpen = async (path: string): Promise<boolean> => {
+    try {
+      const result = await openRecentProjectFile(path);
+      return await handleDroppedProject(result.text, result.path);
+    } catch (error) {
+      console.error("Failed to open native project path", error);
+      setActionError(
+        error instanceof Error ? error.message : t("toolbar.error.couldNotOpenProject"),
+      );
+      return false;
+    }
+  };
+
   // Builds the embed-mode layers: every local vector layer carries its own
   // features so the project is self-contained (portable to another machine or
   // share.geolibre.app). Add Vector Layer control layers get their features
@@ -1534,6 +1568,8 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     buildCurrentProject,
     buildEmbeddedProject,
     persistFieldSurveyProject,
+    handleDroppedProject,
+    handleNativeProjectOpen,
     handleSave,
     handleSaveAs,
     handleExportHtml,

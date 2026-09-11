@@ -1,3 +1,4 @@
+import type { JSONSchema, Tool } from "@strands-agents/sdk";
 import type {
   ExternalNativePaintBridge,
   ExternalNativePaintMode,
@@ -12,6 +13,7 @@ import type {
   QueryResult as ZarrQueryResult,
   Selector as ZarrSelector,
 } from "@carbonplan/zarr-layer";
+import type { CesiumSceneHandle } from "@geolibre/map";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { IControl, Map as MapLibreMap } from "maplibre-gl";
 import type { OvertureTheme } from "maplibre-gl-overture-maps";
@@ -358,7 +360,28 @@ export interface GeoLibreSelection {
   features: Feature<Geometry | null>[];
 }
 
+/** A lightweight assistant tool for standalone plugins. No runtime SDK import is needed.
+ * JSON Schema describes input to the model but does NOT validate it at runtime.
+ * The callback must validate its own input. Return JSON-serializable data;
+ * undefined is converted to null and thrown errors become tool error results.
+ */
+export interface AssistantToolSpec {
+  name: string;
+  description: string;
+  inputSchema?: JSONSchema;
+  callback: (input: unknown) => unknown | Promise<unknown>;
+}
+
 export interface GeoLibreAppAPI {
+  /** Register an SDK Tool. The host scopes ownership to the calling plugin.
+   * Returns a disposer; the host also removes tools on plugin deactivation.
+   */
+  registerAssistantTool?: (tool: Tool, ownerPluginId?: string) => () => void;
+  /** Register a plain JSON Schema tool without importing the agent SDK.
+   * See AssistantToolSpec for input validation and return-value requirements.
+   */
+  registerAssistantToolSpec?: (spec: AssistantToolSpec, ownerPluginId?: string) => () => void;
+
   setBasemap: (styleUrl: string) => void;
   addGeoJsonLayer: (name: string, data: FeatureCollection, sourcePath?: string) => string;
   listLayers?: () => GeoLibreLayerSummary[];
@@ -552,7 +575,32 @@ export interface GeoLibreAppAPI {
   /** Remove a Layers-panel group without removing its child layers. */
   removeLayerGroup?: (id: string) => void;
   fitBounds?: (bounds: [number, number, number, number]) => void;
+  /**
+   * The geographic extent the primary map currently shows, as
+   * `[west, south, east, north]` in degrees, or `null` when no map is mounted
+   * (or the globe is mid-morph and has no bounded view).
+   *
+   * The renderer-neutral replacement for `getMap()?.getBounds()`, which is the
+   * shape a catalog or service browser needs to narrow a search to the
+   * viewport. `getMap()` answers `null` on the globe, so a plugin reading
+   * bounds through it silently drops the filter there and searches the whole
+   * world while its "current view only" checkbox stays ticked — use this
+   * instead in any plugin that declares `engines: ["maplibre", "cesium"]`.
+   * A crossing of the antimeridian is unwrapped (east > 180), as
+   * `MapExtent` carries it everywhere else in the app.
+   */
+  getViewBounds?: () => [number, number, number, number] | null;
   getMap?: () => MapLibreMap | null;
+  /** Active primary renderer, including while its canvas is being replaced. */
+  getMapRenderer?: () => MapRendererKind;
+  /**
+   * The primary Cesium globe's native scene, or `null` when the primary map is
+   * not a globe (or is still mounting). The globe's counterpart to
+   * {@link getMap}: a plugin that declares `engines: ["maplibre", "cesium"]`
+   * branches on which of the two is non-null. The handle carries the
+   * `@cesium/engine` namespace, so a plugin never imports Cesium itself.
+   */
+  getCesiumScene?: () => CesiumSceneHandle | null;
   /**
    * Open an http(s) URL in the system browser. Needed because the Tauri
    * desktop webview ignores `window.open`/`target="_blank"` and would open the

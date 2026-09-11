@@ -3,8 +3,11 @@ import {
   setExternalNativePaintBridge,
   useAppStore,
 } from "@geolibre/core";
+import { buildProjectEgressSnapshot } from "../lib/build-project-snapshot";
+import { nativeWmsTileUrl } from "../lib/native-wms-url";
 import {
   addRasterToMap,
+  setRasterRenderEngine,
   addZarrRasterLayer,
   buildSelectorTimeBinding,
   queryZarrLayer,
@@ -15,8 +18,8 @@ import {
   type TemporalLayerAdapter,
   setZarrLayerSelector,
   setZarrLocalStoreProvider,
-  fieldSurveyPlugin,
   maplibreAnnotationsPlugin,
+  maplibreDimensionsPlugin,
   maplibreBasemapControlPlugin,
   maplibreComponentsPlugin,
   maplibreDeckGlVizPlugin,
@@ -45,6 +48,8 @@ import {
   maplibreNaturalEarthPlugin,
   maplibreHuggingFacePlugin,
   maplibreGeoLensPlugin,
+  maplibreVantorPlugin,
+  maplibrePlanetOpenDataPlugin,
   maplibreOvertureMapsPlugin,
   queryOvertureFeatures,
   maplibreGraticulePlugin,
@@ -61,6 +66,7 @@ import {
   maplibreMapillaryPlugin,
   maplibreReverseGeocodePlugin,
   maplibreStreetViewPlugin,
+  maplibreSamGeoPlugin,
   maplibreSunPlugin,
   maplibreRouteAnimationPlugin,
   flightSimulatorPlugin,
@@ -70,6 +76,7 @@ import {
   maplibreTimeSliderPlugin,
   setTimelapseVideoSaver,
   maplibreUsgsLidarPlugin,
+  maplibreUsgsNldiPlugin,
   PluginManager,
   registerRightPanel,
   unregisterRightPanel,
@@ -79,6 +86,8 @@ import {
   getActiveRightPanel,
   setActiveRightPanelDock,
   getActiveRightPanelDock,
+  registerAssistantTool,
+  registerAssistantToolSpec,
   registerToolbarMenu,
   unregisterToolbarMenu,
   registerFloatingPanel,
@@ -87,9 +96,10 @@ import {
   closeFloatingPanel,
   getOpenFloatingPanels,
 } from "@geolibre/plugins";
-import type { MapEngine } from "@geolibre/map";
+import { CesiumEngine, getPrimaryCesiumControlHost, type MapEngine } from "@geolibre/map";
 import type {
   GeoLibreCogLayerOptions,
+  GeoLibreCogRenderEngine,
   GeoLibreDeckGL,
   GeoLibreExternalNativeLayerRegistration,
   GeoLibreFileDialogOptions,
@@ -125,6 +135,7 @@ import { openExternalLink } from "../lib/open-external";
 import { fetchUrlBytes } from "../lib/native-http";
 import {
   dedupeVectorUrlFetch,
+  fetchBrowserShapefileZip,
   isBlockedUrlError,
   vectorDownloadFileName,
 } from "../lib/vector-url-fetch";
@@ -183,7 +194,7 @@ manager.registerAll([
   maplibreLayerControlPlugin,
   maplibreGeoEditorPlugin,
   maplibreAnnotationsPlugin,
-  fieldSurveyPlugin,
+  maplibreDimensionsPlugin,
   maplibreBasemapControlPlugin,
   // The web service plugins (WEB_SERVICE_PLUGIN_IDS) are grouped into the
   // "Web Services" submenu, rendered where the first of them appears in this
@@ -192,6 +203,9 @@ manager.registerAll([
   maplibreNasaEarthdataPlugin,
   maplibreEnviroAtlasPlugin,
   maplibreNationalMapPlugin,
+  maplibreUsgsNldiPlugin,
+  maplibreVantorPlugin,
+  maplibrePlanetOpenDataPlugin,
   maplibreEarthdataGisPlugin,
   maplibreOpenAerialMapPlugin,
   maplibreArcGisHubPlugin,
@@ -229,6 +243,9 @@ manager.registerAll([
   maplibreSunPlugin,
   maplibreRouteAnimationPlugin,
   flightSimulatorPlugin,
+  // Last visible entry of the Plugins menu; the ids below are skipped by
+  // PluginsMenu and surface elsewhere.
+  maplibreSamGeoPlugin,
   maplibreDirectionsPlugin,
   maplibreReverseGeocodePlugin,
   maplibreDeckGlVizPlugin,
@@ -265,7 +282,12 @@ setEarthdataCogSaver(async (geoTiffBytes, defaultName) => {
   const saved = await saveBinaryFileWithFallback(cogBytes, {
     defaultName,
     filters: [{ name: "Cloud Optimized GeoTIFF", extensions: ["tif"] }],
-    browserTypes: [{ description: "Cloud Optimized GeoTIFF", accept: { "image/tiff": [".tif"] } }],
+    browserTypes: [
+      {
+        description: "Cloud Optimized GeoTIFF",
+        accept: { "image/tiff": [".tif"] },
+      },
+    ],
     mimeType: "image/tiff",
   });
   return saved !== null;
@@ -479,9 +501,7 @@ export function usePluginRegistry() {
 // Built-in plugins are registered at module load so the toolbar can render
 // plugin menu items on the first pass. This hook additionally kicks off the
 // external plugin scan and reports whether it has finished.
-export function useExternalPluginsReady(
-  mapControllerRef: RefObject<MapEngine | null>,
-): boolean {
+export function useExternalPluginsReady(mapControllerRef: RefObject<MapEngine | null>): boolean {
   const desktopSettings = useDesktopSettingsStore((state) => state.desktopSettings);
 
   useEffect(() => {
@@ -586,9 +606,7 @@ export function useProjectPluginTrust(): ProjectPluginTrustState {
  * Mounted once near the app root so it covers every way into split view — the
  * View menu, loading a project, or a plugin — not just the toolbar item.
  */
-export function useSwipeSplitViewExclusivity(
-  mapControllerRef: RefObject<MapEngine | null>,
-): void {
+export function useSwipeSplitViewExclusivity(mapControllerRef: RefObject<MapEngine | null>): void {
   const paneCount = useAppStore((state) => state.mapLayout.rows * state.mapLayout.cols);
 
   useEffect(() => {
@@ -774,9 +792,7 @@ export function bindTemporalLayer(
  *
  * @param mapControllerRef - Used to build the app API for activation.
  */
-export function activateTimeSliderForBinding(
-  mapControllerRef?: RefObject<MapEngine | null>,
-): void {
+export function activateTimeSliderForBinding(mapControllerRef?: RefObject<MapEngine | null>): void {
   if (manager.isActive(TIME_SLIDER_PLUGIN_ID)) return;
   const before = JSON.stringify(projectPluginStateSnapshot());
   try {
@@ -908,7 +924,7 @@ export function createAppAPI(mapControllerRef?: RefObject<MapEngine | null>) {
         name,
         {
           type: "wms",
-          tiles: [tileUrl],
+          tiles: [isTauriRuntime() ? nativeWmsTileUrl(tileUrl) : tileUrl],
           url,
           // Persist the WMS request parameters so the layer round-trips through
           // a saved project, mirroring the Add Data dialog's WMS source.
@@ -951,6 +967,7 @@ export function createAppAPI(mapControllerRef?: RefObject<MapEngine | null>) {
         ...(options?.beforeLayerId ? { beforeId: options.beforeLayerId } : {}),
       });
     },
+    setCogRenderEngine: (engine: GeoLibreCogRenderEngine) => setRasterRenderEngine(api, engine),
     // Zarr goes through the components plugin's shared @carbonplan/zarr-layer
     // control for the same reason as addCogLayer: the host owns the renderer, so
     // a plugin does not bundle (and fail to activate) a second copy.
@@ -1032,10 +1049,19 @@ export function createAppAPI(mapControllerRef?: RefObject<MapEngine | null>) {
     queryOvertureFeatures,
     addLayerGroup: (name?: string, layerIds?: string[]) =>
       useAppStore.getState().addLayerGroup(name, layerIds),
+    moveLayersToGroup: (layerIds: string[], groupId: string | null) =>
+      useAppStore.getState().moveLayersToGroup(layerIds, groupId),
     removeLayerGroup: (id: string) => useAppStore.getState().removeLayerGroup(id),
     fitBounds: (bounds: [number, number, number, number]) =>
       mapControllerRef?.current?.fitBounds(bounds),
+    getViewBounds: () => mapControllerRef?.current?.getViewBounds() ?? null,
     getMap: () => mapControllerRef?.current?.getMap() ?? null,
+    getMapRenderer: () => useAppStore.getState().primaryRenderer,
+    getCesiumScene: () => {
+      const engine = mapControllerRef?.current;
+      return engine instanceof CesiumEngine ? engine.getCesiumScene() : null;
+    },
+    getProjectSnapshot: () => buildProjectEgressSnapshot(mapControllerRef ?? { current: null }),
     openExternalUrl: (url: string) => void openExternalLink(url),
     pickLocalDirectoryFiles,
     // Present only on desktop (filesystem access); the Vector panel keys off its
@@ -1086,6 +1112,23 @@ export function createAppAPI(mapControllerRef?: RefObject<MapEngine | null>) {
           }
         }
         const proxyUrl = githubRawVectorProxyUrl(url);
+        if (!isTauriRuntime()) {
+          // DuckDB-WASM cannot read `/vsizip//vsicurl/` in a browser. Download
+          // remote Shapefile archives first so maplibre-gl-vector receives the
+          // same File shape as a working local drop and can unzip/register its
+          // components itself. Leave every non-ZIP URL alone so formats such as
+          // GeoParquet retain their direct range-read path.
+          try {
+            const archive = await fetchBrowserShapefileZip(url, budget());
+            if (archive) return archive;
+          } catch (error) {
+            // GitHub's /raw route rejects browser CORS, so its existing guarded
+            // proxy gets one chance below. For every other origin, preserve the
+            // browser's real download/CORS failure instead of falling through to
+            // DuckDB's misleading "does not exist in the file system" error.
+            if (!proxyUrl) throw error;
+          }
+        }
         if (!proxyUrl) return null;
         const response = await fetch(proxyUrl, { signal: budget() });
         if (!response.ok) {
@@ -1157,9 +1200,17 @@ export function createAppAPI(mapControllerRef?: RefObject<MapEngine | null>) {
     addMapControl: (
       control: Parameters<MapEngine["addControl"]>[0],
       position?: Parameters<MapEngine["addControl"]>[1],
-    ) => mapControllerRef?.current?.addControl(control, position) ?? false,
-    removeMapControl: (control: Parameters<MapEngine["removeControl"]>[0]) =>
-      mapControllerRef?.current?.removeControl(control),
+    ) =>
+      mapControllerRef?.current?.addControl(control, position) ??
+      getPrimaryCesiumControlHost()?.addControl(control, position) ??
+      false,
+    removeMapControl: (control: Parameters<MapEngine["removeControl"]>[0]) => {
+      if (mapControllerRef?.current) {
+        mapControllerRef.current.removeControl(control);
+      } else {
+        getPrimaryCesiumControlHost()?.removeControl(control);
+      }
+    },
     setBuiltInMapControlVisible: (
       control: Parameters<MapEngine["setBuiltInControlVisible"]>[0],
       visible: boolean,
@@ -1248,6 +1299,8 @@ export function createAppAPI(mapControllerRef?: RefObject<MapEngine | null>) {
     setActiveRightPanelDock,
     getActiveRightPanelDock,
     ...createPluginLocaleApi(i18n),
+    registerAssistantTool,
+    registerAssistantToolSpec,
     registerToolbarMenu,
     unregisterToolbarMenu,
     registerFloatingPanel,

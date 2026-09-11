@@ -14,9 +14,13 @@ import { applyBasemapAppearance, applyBasemapImagery, getStadiaApiKey } from "./
 import { isSameView } from "./cesium-camera";
 import { installCesiumInteractions } from "./cesium-interactions";
 import { CesiumEngine } from "./cesium-engine";
-import type { MapEngine } from "./map-engine";
+import type { BuiltInMapControl, MapEngine } from "./map-engine";
 import { CesiumControlHost, setPrimaryCesiumControlHost } from "./cesium-control-host";
-import type { CesiumWidgetControls, CesiumWidgetControlLabels } from "./cesium-widget-controls";
+import type {
+  CesiumWidgetControlHandle,
+  CesiumWidgetControls,
+  CesiumWidgetControlLabels,
+} from "./cesium-widget-controls";
 
 // The Cesium 3D-globe view (see private/cesium-view-plan.md). M1 wired the
 // build, token, and split-pane mount; M2 synced the camera with the shared store
@@ -350,6 +354,7 @@ export const CesiumCanvas = memo(function CesiumCanvas({
           // choice and fail without an Ion token (Ion's default imagery needs
           // one), which is what used to keep the globe off the keyless path.
           baseLayer: false,
+          contextOptions: { webgl: { preserveDrawingBuffer: true } },
           // Match the project map in flat modes, including its vertical extent.
           mapProjection: new Cesium.WebMercatorProjection(),
         });
@@ -384,11 +389,11 @@ export const CesiumCanvas = memo(function CesiumCanvas({
         });
         engineInstanceRef.current = engine;
 
-        // Restore the saved terrain preference when credentials are available.
+        // Restore terrain, using keyless Terrarium when Ion is unavailable.
         // Awaited before the camera is seeded: ground height is what turns
         // MapLibre's zoom into a camera distance, so seeding first would place
         // the first frame against the ellipsoid.
-        if (token && useAppStore.getState().preferences.map.terrainEnabled)
+        if (useAppStore.getState().preferences.map.terrainEnabled)
           await engine.enableWorldTerrain();
         // The unmount cleanup may have run during the terrain await (destroying
         // the viewer); re-check before touching it, mirroring the guard after the
@@ -398,7 +403,7 @@ export const CesiumCanvas = memo(function CesiumCanvas({
         if (cancelled || viewer.isDestroyed()) return;
 
         if (viewId === undefined) {
-          const host = new CesiumControlHost(viewer, container);
+          const host = new CesiumControlHost(viewer, container, Cesium);
           controlHostRef.current = host;
           setPrimaryCesiumControlHost(host);
           // Cesium's native toolbar widgets. Imported
@@ -417,13 +422,28 @@ export const CesiumCanvas = memo(function CesiumCanvas({
               Boolean(token),
             );
             widgetControlsRef.current = controls;
-            // Top-right, above MapLibre's navigation control on the 2D map, so
-            // the toolbar reads the same whichever renderer is drawing.
-            for (const control of controls.all) host.addControl(control, "top-right");
-            // Hand the fullscreen button to the engine so Controls → Fullscreen
-            // governs it here as it does on the 2D map. The other widgets have no
-            // menu counterpart and stay unconditional.
-            engine.registerBuiltInControl("fullscreen", controls.fullscreen);
+            // Home, the scene-mode picker and fullscreen mount through the
+            // engine under a built-in control id, so the Controls menu governs
+            // them and a remount restores the visibility and corner each was
+            // last given (a hidden control is not mounted at all). Home sits
+            // under "compass": the 2D map's compass is itself a
+            // reset-pitch-and-bearing button, and unlike "navigation" it is
+            // visible by default, so the Controls menu checkbox matches the
+            // button the globe mounts here. The base-layer picker has no 2D
+            // counterpart and mounts directly. Iterating `all` keeps the
+            // stacking order either way; top-right by default, above
+            // MapLibre's navigation control on the 2D map, so the toolbar
+            // reads the same whichever renderer is drawing.
+            const builtInIds = new Map<CesiumWidgetControlHandle, BuiltInMapControl>([
+              [controls.home, "compass"],
+              [controls.sceneMode, "globe"],
+              [controls.fullscreen, "fullscreen"],
+            ]);
+            for (const control of controls.all) {
+              const id = builtInIds.get(control);
+              if (id) engine.registerBuiltInControl(id, control);
+              else host.addControl(control, "top-right");
+            }
           }
         }
 
@@ -540,7 +560,7 @@ export const CesiumCanvas = memo(function CesiumCanvas({
   useEffect(() => {
     const engine = engineInstanceRef.current;
     if (!ready || !engine) return;
-    const enabled = terrainEnabled && Boolean(ionToken?.trim());
+    const enabled = terrainEnabled;
     if (engine.isTerrainEnabled() !== enabled) engine.setTerrainEnabled(enabled);
   }, [ready, terrainEnabled, ionToken]);
 

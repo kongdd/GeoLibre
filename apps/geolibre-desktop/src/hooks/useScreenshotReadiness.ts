@@ -1,7 +1,11 @@
 import { useEffect, type RefObject } from "react";
 import { useAppStore } from "@geolibre/core";
 import type { MapEngine } from "@geolibre/map";
-import { getRasterLoadState, getSharedDeckLoadState } from "@geolibre/plugins";
+import {
+  getRasterLoadState,
+  getSharedDeckLoadState,
+  getSwipeRasterLoadState,
+} from "@geolibre/plugins";
 import { inspectScreenshotLayers, screenshotReadinessEnabled } from "../lib/screenshot-readiness";
 
 /** Opt-in DOM contract for browser automation; adds no pixels to the screenshot. */
@@ -17,6 +21,7 @@ export function useScreenshotReadiness(
     if (!screenshotReadinessEnabled(window.location.search)) return;
     const root = document.documentElement;
     const map = controller.current?.getMap();
+    const engine = controller.current;
     const failures = new Set<string>();
     let settledSince = 0;
     let started = performance.now();
@@ -69,15 +74,17 @@ export function useScreenshotReadiness(
       checkedAt = performance.now();
       const errors: string[] = [];
       if (loadError) errors.push(loadError);
-      if (cesium) errors.push("Screenshot readiness is not supported for the Cesium renderer");
       const store = useAppStore.getState();
       const result =
-        map && pluginsReady && !projectBusy && !cesium
-          ? inspectScreenshotLayers(map, store.layers, store.layerGroups, {
-              raster: getRasterLoadState,
-              deck: getSharedDeckLoadState,
-            })
-          : { pending: ["Project and map initialization"], errors: [] };
+        cesium && engine && pluginsReady && !projectBusy
+          ? engine.getRenderStatus()
+          : map && pluginsReady && !projectBusy
+            ? inspectScreenshotLayers(map, store.layers, store.layerGroups, {
+                raster: getRasterLoadState,
+                swipe: getSwipeRasterLoadState,
+                deck: getSharedDeckLoadState,
+              })
+            : { pending: ["Project and map initialization"], errors: [] };
       errors.push(...result.errors);
       if (errors.length) {
         settledSince = 0;
@@ -85,16 +92,16 @@ export function useScreenshotReadiness(
         return;
       }
       const complete =
-        map &&
+        engine &&
         !projectBusy &&
         pluginsReady &&
         result.pending.length === 0 &&
-        map.loaded() &&
-        map.areTilesLoaded() &&
-        !map.isMoving() &&
+        (cesium || (map?.loaded() && map.areTilesLoaded() && !map.isMoving())) &&
         document.fonts.status === "loaded";
-      if (!complete) settledSince = 0;
-      else settledSince ||= performance.now();
+      if (!complete) {
+        if (root.dataset.geolibreLoadState === "ready") started = performance.now();
+        settledSince = 0;
+      } else settledSince ||= performance.now();
       // Keep the predicates true across painted frames, including raster fade
       // and asynchronous plugin/store updates after the initial map idle.
       if (complete && performance.now() - settledSince >= 500) {
